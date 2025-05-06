@@ -36,6 +36,20 @@ def save_image_from_base64(data_uri):
     except Exception as e:
         print(f"Error saving image: {e}")
         return None
+def clear_logs():
+    """logsフォルダを空にする（フォルダ自体は残す）"""
+    if os.path.exists(LOG_DIR):
+        for file in os.listdir(LOG_DIR):
+            file_path = os.path.join(LOG_DIR, file)
+            if os.path.isfile(file_path):
+                os.remove(file_path)
+            elif os.path.isdir(file_path):
+                for sub_file in os.listdir(file_path):
+                    os.remove(os.path.join(file_path, sub_file))
+                # サブフォルダも消したい場合は↓を有効化
+                # os.rmdir(file_path)
+    else:
+        os.makedirs(LOG_DIR)
 
 
 def extract_base64_image(text):
@@ -90,11 +104,11 @@ class LoggingCallbackHandler(BaseCallbackHandler):
 
 async def main_task():
 
-    url = "https://zenn.dev"
+    url = "https://news.yahoo.co.jp/"
     task_prompt = f"""
-    Visit the website {url} and capture a screenshot.
+    capture a screenshot.
     """
-
+    clear_logs()
     browser = Browser(config=BrowserConfig(headless=True))
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.8, callbacks=[LoggingCallbackHandler()])
 
@@ -102,9 +116,10 @@ async def main_task():
         task=task_prompt,
         llm=llm,
         browser=browser,
+        initial_actions=[{'open_tab': {'url': url}}]
     )
 
-    result = await agent.run(max_steps=3)
+    result = await agent.run(max_steps=2)
 
 
 if __name__ == "__main__":

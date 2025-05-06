@@ -231,19 +231,21 @@
    * Highlights an element in the DOM and returns the index of the next element.
    */
   function highlightElement(element, index, parentIframe = null) {
-    pushTiming('highlighting');
-    
+    pushTiming("highlighting");
+
     if (!element) return index;
 
-    // Store overlays and the single label for updating
     const overlays = [];
     let label = null;
     let labelWidth = 20;
     let labelHeight = 16;
     let cleanupFn = null;
 
+    // グローバルに衝突判定用の矩形リストを持つ
+    window._highlightRects = window._highlightRects || [];
+    window._labelRects = window._labelRects || [];
+
     try {
-      // Create or get highlight container
       let container = document.getElementById(HIGHLIGHT_CONTAINER_ID);
       if (!container) {
         container = document.createElement("div");
@@ -255,16 +257,13 @@
         container.style.width = "100%";
         container.style.height = "100%";
         container.style.zIndex = "2147483640";
-        container.style.backgroundColor = 'transparent';
+        container.style.backgroundColor = "transparent";
         document.body.appendChild(container);
       }
 
-      // Get element client rects
-      const rects = element.getClientRects(); // Use getClientRects()
+      const rects = element.getClientRects();
+      if (!rects || rects.length === 0) return index;
 
-      if (!rects || rects.length === 0) return index; // Exit if no rects
-
-      // Generate a color based on the index
       const colors = [
         "#FF0000",
         "#00FF00",
@@ -281,22 +280,20 @@
       ];
       const colorIndex = index % colors.length;
       const baseColor = colors[colorIndex];
-      const backgroundColor = baseColor + "1A"; // 10% opacity version of the color
+      const backgroundColor = baseColor + "1A";
 
-      // Get iframe offset if necessary
       let iframeOffset = { x: 0, y: 0 };
       if (parentIframe) {
-        const iframeRect = parentIframe.getBoundingClientRect(); // Keep getBoundingClientRect for iframe offset
+        const iframeRect = parentIframe.getBoundingClientRect();
         iframeOffset.x = iframeRect.left;
         iframeOffset.y = iframeRect.top;
       }
 
-      // Create fragment to hold overlay elements
       const fragment = document.createDocumentFragment();
 
-      // Create highlight overlays for each client rect
+      // ハイライト矩形を作成
       for (const rect of rects) {
-        if (rect.width === 0 || rect.height === 0) continue; // Skip empty rects
+        if (rect.width === 0 || rect.height === 0) continue;
 
         const overlay = document.createElement("div");
         overlay.style.position = "fixed";
@@ -314,10 +311,17 @@
         overlay.style.height = `${rect.height}px`;
 
         fragment.appendChild(overlay);
-        overlays.push({ element: overlay, initialRect: rect }); // Store overlay and its rect
+        overlays.push({ element: overlay, initialRect: rect });
+
+        // グローバルに登録
+        window._highlightRects.push({
+          top: top,
+          left: left,
+          right: left + rect.width,
+          bottom: top + rect.height,
+        });
       }
 
-      // Create and position a single label relative to the first rect
       const firstRect = rects[0];
       label = document.createElement("div");
       label.className = "playwright-highlight-label";
@@ -326,98 +330,221 @@
       label.style.color = "white";
       label.style.padding = "1px 4px";
       label.style.borderRadius = "4px";
-      label.style.fontSize = `${Math.min(12, Math.max(8, firstRect.height / 2))}px`;
+      label.style.fontSize = `${Math.min(
+        12,
+        Math.max(8, firstRect.height / 2)
+      )}px`;
       label.textContent = index;
 
-      labelWidth = label.offsetWidth > 0 ? label.offsetWidth : labelWidth; // Update actual width if possible
-      labelHeight = label.offsetHeight > 0 ? label.offsetHeight : labelHeight; // Update actual height if possible
+      fragment.appendChild(label);
+      container.appendChild(fragment);
+
+      // ラベルのサイズを確認
+      // ...省略（今までのコードそのまま）
+
+      // ラベルサイズ取得後
+      labelWidth = label.offsetWidth > 0 ? label.offsetWidth : labelWidth;
+      labelHeight = label.offsetHeight > 0 ? label.offsetHeight : labelHeight;
 
       const firstRectTop = firstRect.top + iframeOffset.y;
       const firstRectLeft = firstRect.left + iframeOffset.x;
 
-      let labelTop = firstRectTop + 2;
-      let labelLeft = firstRectLeft + firstRect.width - labelWidth - 2;
+      // 面積ベースの判定を追加
+      const elementArea = firstRect.width * firstRect.height;
+      const labelArea = labelWidth * labelHeight;
+      const occupiesLargeArea = labelArea / elementArea >= 0.25;
 
-      // Adjust label position if first rect is too small
-      if (firstRect.width < labelWidth + 4 || firstRect.height < labelHeight + 4) {
-        labelTop = firstRectTop - labelHeight - 2;
-        labelLeft = firstRectLeft + firstRect.width - labelWidth; // Align with right edge
-        if (labelLeft < iframeOffset.x) labelLeft = firstRectLeft; // Prevent going off-left
+      // 元の幅・高さ比ベースも残す
+      const widthRatio = labelWidth / firstRect.width;
+      const heightRatio = labelHeight / firstRect.height;
+      const isBigEnough = widthRatio < 0.25 && heightRatio < 0.25;
+
+      // 絶対に外出しするフラグ
+      const mustPlaceOutside = occupiesLargeArea;
+
+      const insidePositions = [
+        { dx: firstRect.width - labelWidth - 2, dy: 2 }, // 右上
+        { dx: 2, dy: 2 }, // 左上
+        {
+          dx: firstRect.width - labelWidth - 2,
+          dy: firstRect.height - labelHeight - 2,
+        }, // 右下
+        { dx: 2, dy: firstRect.height - labelHeight - 2 }, // 左下
+      ];
+
+      const outsidePositions = [
+        { dx: firstRect.width - labelWidth, dy: -labelHeight - 4 },
+        { dx: (firstRect.width - labelWidth) / 2, dy: -labelHeight - 4 },
+        { dx: -labelWidth, dy: -labelHeight - 4 },
+        { dx: firstRect.width + 4, dy: 0 },
+        { dx: -labelWidth - 4, dy: 0 },
+        { dx: (firstRect.width - labelWidth) / 2, dy: firstRect.height + 4 },
+      ];
+
+      // 配置順決定
+      const tryPositions = mustPlaceOutside
+        ? [...outsidePositions]
+        : isBigEnough
+        ? [...insidePositions, ...outsidePositions]
+        : [...outsidePositions, ...insidePositions];
+
+      // 衝突判定関数
+      function isColliding(candidateRect) {
+        // 他のラベルと衝突していないか
+        for (const otherRect of window._labelRects || []) {
+          if (
+            !(
+              candidateRect.right < otherRect.left ||
+              candidateRect.left > otherRect.right ||
+              candidateRect.bottom < otherRect.top ||
+              candidateRect.top > otherRect.bottom
+            )
+          ) {
+            return true; // 衝突あり
+          }
+        }
+
+        // ハイライト要素（overlays）とも衝突していないか
+        for (const overlay of document.querySelectorAll(
+          ".playwright-highlight-overlay"
+        )) {
+          const rect = overlay.getBoundingClientRect();
+          if (
+            !(
+              candidateRect.right < rect.left ||
+              candidateRect.left > rect.right ||
+              candidateRect.bottom < rect.top ||
+              candidateRect.top > rect.bottom
+            )
+          ) {
+            return true; // 衝突あり
+          }
+        }
+
+        return false; // 衝突なし
       }
 
-      // Ensure label stays within viewport bounds slightly better
-      labelTop = Math.max(0, Math.min(labelTop, window.innerHeight - labelHeight));
-      labelLeft = Math.max(0, Math.min(labelLeft, window.innerWidth - labelWidth));
 
+      let placed = false;
+      for (const pos of tryPositions) {
+        let candidateTop = firstRectTop + pos.dy;
+        let candidateLeft = firstRectLeft + pos.dx;
+        const rect = {
+          top: candidateTop,
+          left: candidateLeft,
+          right: candidateLeft + labelWidth,
+          bottom: candidateTop + labelHeight,
+        };
 
-      label.style.top = `${labelTop}px`;
-      label.style.left = `${labelLeft}px`;
+        rect.top = Math.max(
+          0,
+          Math.min(rect.top, window.innerHeight - labelHeight)
+        );
+        rect.left = Math.max(
+          0,
+          Math.min(rect.left, window.innerWidth - labelWidth)
+        );
+        rect.bottom = rect.top + labelHeight;
+        rect.right = rect.left + labelWidth;
 
-      fragment.appendChild(label);
-
-      // Update positions on scroll/resize
-      const updatePositions = () => {
-        const newRects = element.getClientRects(); // Get fresh rects
-        let newIframeOffset = { x: 0, y: 0 };
-
-        if (parentIframe) {
-          const iframeRect = parentIframe.getBoundingClientRect(); // Keep getBoundingClientRect for iframe
-          newIframeOffset.x = iframeRect.left;
-          newIframeOffset.y = iframeRect.top;
+        if (!isColliding(rect)) {
+          label.style.top = `${rect.top}px`;
+          label.style.left = `${rect.left}px`;
+          window._labelRects.push(rect);
+          placed = true;
+          break;
         }
+      }
 
-        // Update each overlay
-        overlays.forEach((overlayData, i) => {
-          if (i < newRects.length) { // Check if rect still exists
-            const newRect = newRects[i];
-            const newTop = newRect.top + newIframeOffset.y;
-            const newLeft = newRect.left + newIframeOffset.x;
+      // fallback: 全部衝突する場合
+      if (!placed) {
+        const elementArea = firstRect.width * firstRect.height;
+        const labelArea = labelWidth * labelHeight;
+        const occupiesLargeArea = labelArea / elementArea >= 0.25;
 
-            overlayData.element.style.top = `${newTop}px`;
-            overlayData.element.style.left = `${newLeft}px`;
-            overlayData.element.style.width = `${newRect.width}px`;
-            overlayData.element.style.height = `${newRect.height}px`;
-            overlayData.element.style.display = (newRect.width === 0 || newRect.height === 0) ? 'none' : 'block';
-          } else {
-            // If fewer rects now, hide extra overlays
-            overlayData.element.style.display = 'none';
+        if (occupiesLargeArea) {
+          // 外側候補だけで試す
+          let bestPos = null;
+          for (const pos of outsidePositions) {
+            let candidateTop = firstRectTop + pos.dy;
+            let candidateLeft = firstRectLeft + pos.dx;
+
+            candidateTop = Math.max(
+              0,
+              Math.min(candidateTop, window.innerHeight - labelHeight)
+            );
+            candidateLeft = Math.max(
+              0,
+              Math.min(candidateLeft, window.innerWidth - labelWidth)
+            );
+
+            const rect = {
+              top: candidateTop,
+              left: candidateLeft,
+              right: candidateLeft + labelWidth,
+              bottom: candidateTop + labelHeight,
+            };
+
+            // 衝突しないものを見つけたら即採用
+            if (!isColliding(rect)) {
+              label.style.top = `${rect.top}px`;
+              label.style.left = `${rect.left}px`;
+              label.style.display = "block";
+              label._rect = rect;
+              window._labelRects.push(rect);
+              bestPos = true;
+              break;
+            }
           }
-        });
 
-        // If there are fewer new rects than overlays, hide the extras
-        if (newRects.length < overlays.length) {
-          for (let i = newRects.length; i < overlays.length; i++) {
-            overlays[i].element.style.display = 'none';
+          if (!bestPos) {
+            // 外側でも衝突してる場合 → 一番最初の外側ポジションを強制的に使う
+            const pos = outsidePositions[0];
+            let fallbackTop = firstRectTop + pos.dy;
+            let fallbackLeft = firstRectLeft + pos.dx;
+            fallbackTop = Math.max(
+              0,
+              Math.min(fallbackTop, window.innerHeight - labelHeight)
+            );
+            fallbackLeft = Math.max(
+              0,
+              Math.min(fallbackLeft, window.innerWidth - labelWidth)
+            );
+
+            label.style.top = `${fallbackTop}px`;
+            label.style.left = `${fallbackLeft}px`;
+            label.style.display = "block";
+            window._labelRects.push({
+              top: fallbackTop,
+              left: fallbackLeft,
+              right: fallbackLeft + labelWidth,
+              bottom: fallbackTop + labelHeight,
+            });
           }
+        } else {
+          // 元のfallback（従来のロジック）
+          let fallbackTop = firstRectTop + 2;
+          let fallbackLeft = firstRectLeft + firstRect.width - labelWidth - 2;
+          fallbackTop = Math.max(
+            0,
+            Math.min(fallbackTop, window.innerHeight - labelHeight)
+          );
+          fallbackLeft = Math.max(
+            0,
+            Math.min(fallbackLeft, window.innerWidth - labelWidth)
+          );
+          label.style.top = `${fallbackTop}px`;
+          label.style.left = `${fallbackLeft}px`;
+          window._labelRects.push({
+            top: fallbackTop,
+            left: fallbackLeft,
+            right: fallbackLeft + labelWidth,
+            bottom: fallbackTop + labelHeight,
+          });
         }
+      }
 
-        // Update label position based on the first new rect
-        if (label && newRects.length > 0) {
-          const firstNewRect = newRects[0];
-          const firstNewRectTop = firstNewRect.top + newIframeOffset.y;
-          const firstNewRectLeft = firstNewRect.left + newIframeOffset.x;
 
-          let newLabelTop = firstNewRectTop + 2;
-          let newLabelLeft = firstNewRectLeft + firstNewRect.width - labelWidth - 2;
-
-          if (firstNewRect.width < labelWidth + 4 || firstNewRect.height < labelHeight + 4) {
-            newLabelTop = firstNewRectTop - labelHeight - 2;
-            newLabelLeft = firstNewRectLeft + firstNewRect.width - labelWidth;
-            if (newLabelLeft < newIframeOffset.x) newLabelLeft = firstNewRectLeft;
-          }
-
-          // Ensure label stays within viewport bounds
-          newLabelTop = Math.max(0, Math.min(newLabelTop, window.innerHeight - labelHeight));
-          newLabelLeft = Math.max(0, Math.min(newLabelLeft, window.innerWidth - labelWidth));
-
-          label.style.top = `${newLabelTop}px`;
-          label.style.left = `${newLabelLeft}px`;
-          label.style.display = 'block';
-        } else if (label) {
-          // Hide label if element has no rects anymore
-          label.style.display = 'none';
-        }
-      };
 
       const throttleFunction = (func, delay) => {
         let lastCall = 0;
@@ -428,33 +555,230 @@
           return func(...args);
         };
       };
+      const updatePositions = () => {
+        const newRects = element.getClientRects();
+        let newIframeOffset = { x: 0, y: 0 };
 
-      const throttledUpdatePositions = throttleFunction(updatePositions, 16); // ~60fps
-      window.addEventListener('scroll', throttledUpdatePositions, true);
-      window.addEventListener('resize', throttledUpdatePositions);
-      
-      // Add cleanup function
+        if (parentIframe) {
+          const iframeRect = parentIframe.getBoundingClientRect();
+          newIframeOffset.x = iframeRect.left;
+          newIframeOffset.y = iframeRect.top;
+        }
+
+        // Update each overlay
+        overlays.forEach((overlayData, i) => {
+          if (i < newRects.length) {
+            const newRect = newRects[i];
+            const newTop = newRect.top + newIframeOffset.y;
+            const newLeft = newRect.left + newIframeOffset.x;
+
+            overlayData.element.style.top = `${newTop}px`;
+            overlayData.element.style.left = `${newLeft}px`;
+            overlayData.element.style.width = `${newRect.width}px`;
+            overlayData.element.style.height = `${newRect.height}px`;
+            overlayData.element.style.display =
+              newRect.width === 0 || newRect.height === 0 ? "none" : "block";
+          } else {
+            overlayData.element.style.display = "none";
+          }
+        });
+
+        if (newRects.length < overlays.length) {
+          for (let i = newRects.length; i < overlays.length; i++) {
+            overlays[i].element.style.display = "none";
+          }
+        }
+
+        // ラベルの再配置
+        if (label && newRects.length > 0) {
+          const firstNewRect = newRects[0];
+          const firstNewRectTop = firstNewRect.top + newIframeOffset.y;
+          const firstNewRectLeft = firstNewRect.left + newIframeOffset.x;
+
+          const elementArea = firstNewRect.width * firstNewRect.height;
+          const labelArea = labelWidth * labelHeight;
+          const occupiesLargeArea = labelArea / elementArea >= 0.25;
+
+          const widthRatio = labelWidth / firstNewRect.width;
+          const heightRatio = labelHeight / firstNewRect.height;
+          const isBigEnough = widthRatio < 0.25 && heightRatio < 0.25;
+
+          const mustPlaceOutside = occupiesLargeArea;
+
+          const insidePositions = [
+            { dx: firstNewRect.width - labelWidth - 2, dy: 2 }, // 右上
+            { dx: 2, dy: 2 }, // 左上
+            {
+              dx: firstNewRect.width - labelWidth - 2,
+              dy: firstNewRect.height - labelHeight - 2,
+            }, // 右下
+            { dx: 2, dy: firstNewRect.height - labelHeight - 2 }, // 左下
+          ];
+
+          const outsidePositions = [
+            { dx: firstNewRect.width - labelWidth, dy: -labelHeight - 4 },
+            { dx: (firstNewRect.width - labelWidth) / 2, dy: -labelHeight - 4 },
+            { dx: -labelWidth, dy: -labelHeight - 4 },
+            { dx: firstNewRect.width + 4, dy: 0 },
+            { dx: -labelWidth - 4, dy: 0 },
+            {
+              dx: (firstNewRect.width - labelWidth) / 2,
+              dy: firstNewRect.height + 4,
+            },
+          ];
+
+          const tryPositions = mustPlaceOutside
+            ? [...outsidePositions]
+            : isBigEnough
+            ? [...insidePositions, ...outsidePositions]
+            : [...outsidePositions, ...insidePositions];
+
+          let placed = false;
+          for (const pos of tryPositions) {
+            let candidateTop = firstNewRectTop + pos.dy;
+            let candidateLeft = firstNewRectLeft + pos.dx;
+            const rect = {
+              top: candidateTop,
+              left: candidateLeft,
+              right: candidateLeft + labelWidth,
+              bottom: candidateTop + labelHeight,
+            };
+
+            rect.top = Math.max(
+              0,
+              Math.min(rect.top, window.innerHeight - labelHeight)
+            );
+            rect.left = Math.max(
+              0,
+              Math.min(rect.left, window.innerWidth - labelWidth)
+            );
+            rect.bottom = rect.top + labelHeight;
+            rect.right = rect.left + labelWidth;
+
+            if (!isColliding(rect)) {
+              label.style.top = `${rect.top}px`;
+              label.style.left = `${rect.left}px`;
+              label.style.display = "block";
+              label._rect = rect; // 衝突リスト更新
+              placed = true;
+              break;
+            }
+          }
+
+          if (!placed) {
+            const elementArea = firstRect.width * firstRect.height;
+            const labelArea = labelWidth * labelHeight;
+            const occupiesLargeArea = labelArea / elementArea >= 0.25;
+
+            if (occupiesLargeArea) {
+              // 外側候補だけで試す
+              let bestPos = null;
+              for (const pos of outsidePositions) {
+                let candidateTop = firstRectTop + pos.dy;
+                let candidateLeft = firstRectLeft + pos.dx;
+
+                candidateTop = Math.max(
+                  0,
+                  Math.min(candidateTop, window.innerHeight - labelHeight)
+                );
+                candidateLeft = Math.max(
+                  0,
+                  Math.min(candidateLeft, window.innerWidth - labelWidth)
+                );
+
+                const rect = {
+                  top: candidateTop,
+                  left: candidateLeft,
+                  right: candidateLeft + labelWidth,
+                  bottom: candidateTop + labelHeight,
+                };
+
+                // 衝突しないものを見つけたら即採用
+                if (!isColliding(rect)) {
+                  label.style.top = `${rect.top}px`;
+                  label.style.left = `${rect.left}px`;
+                  label.style.display = "block";
+                  label._rect = rect;
+                  window._labelRects.push(rect);
+                  bestPos = true;
+                  break;
+                }
+              }
+
+              if (!bestPos) {
+                // 外側でも衝突してる場合 → 一番最初の外側ポジションを強制的に使う
+                const pos = outsidePositions[0];
+                let fallbackTop = firstRectTop + pos.dy;
+                let fallbackLeft = firstRectLeft + pos.dx;
+                fallbackTop = Math.max(
+                  0,
+                  Math.min(fallbackTop, window.innerHeight - labelHeight)
+                );
+                fallbackLeft = Math.max(
+                  0,
+                  Math.min(fallbackLeft, window.innerWidth - labelWidth)
+                );
+
+                label.style.top = `${fallbackTop}px`;
+                label.style.left = `${fallbackLeft}px`;
+                label.style.display = "block";
+                window._labelRects.push({
+                  top: fallbackTop,
+                  left: fallbackLeft,
+                  right: fallbackLeft + labelWidth,
+                  bottom: fallbackTop + labelHeight,
+                });
+              }
+            } else {
+              // 元のfallback（従来のロジック）
+              let fallbackTop = firstRectTop + 2;
+              let fallbackLeft =
+                firstRectLeft + firstRect.width - labelWidth - 2;
+              fallbackTop = Math.max(
+                0,
+                Math.min(fallbackTop, window.innerHeight - labelHeight)
+              );
+              fallbackLeft = Math.max(
+                0,
+                Math.min(fallbackLeft, window.innerWidth - labelWidth)
+              );
+              label.style.top = `${fallbackTop}px`;
+              label.style.left = `${fallbackLeft}px`;
+              window._labelRects.push({
+                top: fallbackTop,
+                left: fallbackLeft,
+                right: fallbackLeft + labelWidth,
+                bottom: fallbackTop + labelHeight,
+              });
+            }
+          }
+        } else if (label) {
+          label.style.display = "none";
+        }
+      };
+
+
+      const throttledUpdatePositions = throttleFunction(updatePositions, 16);
+      window.addEventListener("scroll", throttledUpdatePositions, true);
+      window.addEventListener("resize", throttledUpdatePositions);
+
       cleanupFn = () => {
-        window.removeEventListener('scroll', throttledUpdatePositions, true);
-        window.removeEventListener('resize', throttledUpdatePositions);
-        // Remove overlay elements if needed
-        overlays.forEach(overlay => overlay.element.remove());
+        window.removeEventListener("scroll", throttledUpdatePositions, true);
+        window.removeEventListener("resize", throttledUpdatePositions);
+        overlays.forEach((overlay) => overlay.element.remove());
         if (label) label.remove();
       };
-      
-      // Then add fragment to container in one operation
-      container.appendChild(fragment);
-      
+
       return index + 1;
     } finally {
-      popTiming('highlighting');
-      // Store cleanup function for later use
+      popTiming("highlighting");
       if (cleanupFn) {
-        // Keep a reference to cleanup functions in a global array
-        (window._highlightCleanupFunctions = window._highlightCleanupFunctions || []).push(cleanupFn);
+        (window._highlightCleanupFunctions =
+          window._highlightCleanupFunctions || []).push(cleanupFn);
       }
     }
   }
+
 
   // Add this function to perform cleanup when needed
   function cleanupHighlights() {
