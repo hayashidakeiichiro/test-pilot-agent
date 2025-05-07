@@ -1565,7 +1565,7 @@
       return;
     }
 
-    const firstRect = rects[0];
+    const firstRect = element.getBoundingClientRect();
     let iframeOffset = { x: 0, y: 0 };
     if (parentIframe) {
       const iframeRect = parentIframe.getBoundingClientRect();
@@ -1587,7 +1587,10 @@
       const labelArea = labelWidth * labelHeight;
       const areaRatio = labelArea / elementArea;
 
-      const mustPlaceOutside = areaRatio > 0.1;
+      const mustPlaceOutside =
+        areaRatio > 0.1 ||
+        labelWidth / firstRect.width > 0.5 ||
+        labelHeight / firstRect.height > 0.5;
 
       const topBase = firstRect.top + iframeOffset.y;
       const leftBase = firstRect.left + iframeOffset.x;
@@ -1641,10 +1644,6 @@
       for (const pos of candidatePositions) {
         let top = topBase + pos.dy;
         let left = leftBase + pos.dx;
-
-        // 画面内に収める
-        // top = Math.max(0, Math.min(top, window.innerHeight - labelHeight));
-        // left = Math.max(0, Math.min(left, window.innerWidth - labelWidth));
 
         const candidateRect = {
           top: top,
