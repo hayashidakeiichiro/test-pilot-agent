@@ -6,7 +6,12 @@
     debugMode: false,
   }
 ) => {
-  const { doHighlightElements, focusHighlightIndex, viewportExpansion, debugMode } = args;
+  const {
+    doHighlightElements,
+    focusHighlightIndex,
+    viewportExpansion,
+    debugMode,
+  } = args;
   let highlightIndex = 0; // Reset highlight index
 
   // Add timing stack to handle recursion
@@ -14,7 +19,7 @@
     nodeProcessing: [],
     treeTraversal: [],
     highlighting: [],
-    current: null
+    current: null,
   };
 
   function pushTiming(type) {
@@ -29,50 +34,52 @@
   }
 
   // Only initialize performance tracking if in debug mode
-  const PERF_METRICS = debugMode ? {
-    buildDomTreeCalls: 0,
-    timings: {
-      buildDomTree: 0,
-      highlightElement: 0,
-      isInteractiveElement: 0,
-      isElementVisible: 0,
-      isTopElement: 0,
-      isInExpandedViewport: 0,
-      isTextNodeVisible: 0,
-      getEffectiveScroll: 0,
-    },
-    cacheMetrics: {
-      boundingRectCacheHits: 0,
-      boundingRectCacheMisses: 0,
-      computedStyleCacheHits: 0,
-      computedStyleCacheMisses: 0,
-      getBoundingClientRectTime: 0,
-      getComputedStyleTime: 0,
-      boundingRectHitRate: 0,
-      computedStyleHitRate: 0,
-      overallHitRate: 0,
-      clientRectsCacheHits: 0,
-      clientRectsCacheMisses: 0,
-    },
-    nodeMetrics: {
-      totalNodes: 0,
-      processedNodes: 0,
-      skippedNodes: 0,
-    },
-    buildDomTreeBreakdown: {
-      totalTime: 0,
-      totalSelfTime: 0,
-      buildDomTreeCalls: 0,
-      domOperations: {
-        getBoundingClientRect: 0,
-        getComputedStyle: 0,
-      },
-      domOperationCounts: {
-        getBoundingClientRect: 0,
-        getComputedStyle: 0,
+  const PERF_METRICS = debugMode
+    ? {
+        buildDomTreeCalls: 0,
+        timings: {
+          buildDomTree: 0,
+          highlightElement: 0,
+          isInteractiveElement: 0,
+          isElementVisible: 0,
+          isTopElement: 0,
+          isInExpandedViewport: 0,
+          isTextNodeVisible: 0,
+          getEffectiveScroll: 0,
+        },
+        cacheMetrics: {
+          boundingRectCacheHits: 0,
+          boundingRectCacheMisses: 0,
+          computedStyleCacheHits: 0,
+          computedStyleCacheMisses: 0,
+          getBoundingClientRectTime: 0,
+          getComputedStyleTime: 0,
+          boundingRectHitRate: 0,
+          computedStyleHitRate: 0,
+          overallHitRate: 0,
+          clientRectsCacheHits: 0,
+          clientRectsCacheMisses: 0,
+        },
+        nodeMetrics: {
+          totalNodes: 0,
+          processedNodes: 0,
+          skippedNodes: 0,
+        },
+        buildDomTreeBreakdown: {
+          totalTime: 0,
+          totalSelfTime: 0,
+          buildDomTreeCalls: 0,
+          domOperations: {
+            getBoundingClientRect: 0,
+            getComputedStyle: 0,
+          },
+          domOperationCounts: {
+            getBoundingClientRect: 0,
+            getComputedStyle: 0,
+          },
+        },
       }
-    }
-  } : null;
+    : null;
 
   // Simple timing helper that only runs in debug mode
   function measureTime(fn) {
@@ -93,7 +100,10 @@
     const result = operation();
     const duration = performance.now() - start;
 
-    if (PERF_METRICS && name in PERF_METRICS.buildDomTreeBreakdown.domOperations) {
+    if (
+      PERF_METRICS &&
+      name in PERF_METRICS.buildDomTreeBreakdown.domOperations
+    ) {
       PERF_METRICS.buildDomTreeBreakdown.domOperations[name] += duration;
       PERF_METRICS.buildDomTreeBreakdown.domOperationCounts[name]++;
     }
@@ -110,7 +120,7 @@
       DOM_CACHE.boundingRects = new WeakMap();
       DOM_CACHE.clientRects = new WeakMap();
       DOM_CACHE.computedStyles = new WeakMap();
-    }
+    },
   };
 
   // Cache helper functions
@@ -134,8 +144,10 @@
       rect = element.getBoundingClientRect();
       const duration = performance.now() - start;
       if (PERF_METRICS) {
-        PERF_METRICS.buildDomTreeBreakdown.domOperations.getBoundingClientRect += duration;
-        PERF_METRICS.buildDomTreeBreakdown.domOperationCounts.getBoundingClientRect++;
+        PERF_METRICS.buildDomTreeBreakdown.domOperations.getBoundingClientRect +=
+          duration;
+        PERF_METRICS.buildDomTreeBreakdown.domOperationCounts
+          .getBoundingClientRect++;
       }
     } else {
       rect = element.getBoundingClientRect();
@@ -167,8 +179,10 @@
       style = window.getComputedStyle(element);
       const duration = performance.now() - start;
       if (PERF_METRICS) {
-        PERF_METRICS.buildDomTreeBreakdown.domOperations.getComputedStyle += duration;
-        PERF_METRICS.buildDomTreeBreakdown.domOperationCounts.getComputedStyle++;
+        PERF_METRICS.buildDomTreeBreakdown.domOperations.getComputedStyle +=
+          duration;
+        PERF_METRICS.buildDomTreeBreakdown.domOperationCounts
+          .getComputedStyle++;
       }
     } else {
       style = window.getComputedStyle(element);
@@ -183,20 +197,20 @@
   // Add a new function to get cached client rects
   function getCachedClientRects(element) {
     if (!element) return null;
-    
+
     if (DOM_CACHE.clientRects.has(element)) {
       if (debugMode && PERF_METRICS) {
         PERF_METRICS.cacheMetrics.clientRectsCacheHits++;
       }
       return DOM_CACHE.clientRects.get(element);
     }
-    
+
     if (debugMode && PERF_METRICS) {
       PERF_METRICS.cacheMetrics.clientRectsCacheMisses++;
     }
-    
+
     const rects = element.getClientRects();
-    
+
     if (rects) {
       DOM_CACHE.clientRects.set(element, rects);
     }
@@ -220,7 +234,7 @@
   // Initialize once and reuse
   const viewportObserver = new IntersectionObserver(
     (entries) => {
-      entries.forEach(entry => {
+      entries.forEach((entry) => {
         elementVisibilityMap.set(entry.target, entry.isIntersecting);
       });
     },
@@ -235,17 +249,15 @@
 
     if (!element) return index;
 
+    // Store overlays and the single label for updating
     const overlays = [];
     let label = null;
     let labelWidth = 20;
     let labelHeight = 16;
     let cleanupFn = null;
 
-    // グローバルに衝突判定用の矩形リストを持つ
-    window._highlightRects = window._highlightRects || [];
-    window._labelRects = window._labelRects || [];
-
     try {
+      // Create or get highlight container
       let container = document.getElementById(HIGHLIGHT_CONTAINER_ID);
       if (!container) {
         container = document.createElement("div");
@@ -261,9 +273,12 @@
         document.body.appendChild(container);
       }
 
-      const rects = element.getClientRects();
-      if (!rects || rects.length === 0) return index;
+      // Get element client rects
+      const rects = element.getClientRects(); // Use getClientRects()
 
+      if (!rects || rects.length === 0) return index; // Exit if no rects
+
+      // Generate a color based on the index
       const colors = [
         "#FF0000",
         "#00FF00",
@@ -280,20 +295,22 @@
       ];
       const colorIndex = index % colors.length;
       const baseColor = colors[colorIndex];
-      const backgroundColor = baseColor + "1A";
+      const backgroundColor = baseColor + "1A"; // 10% opacity version of the color
 
+      // Get iframe offset if necessary
       let iframeOffset = { x: 0, y: 0 };
       if (parentIframe) {
-        const iframeRect = parentIframe.getBoundingClientRect();
+        const iframeRect = parentIframe.getBoundingClientRect(); // Keep getBoundingClientRect for iframe offset
         iframeOffset.x = iframeRect.left;
         iframeOffset.y = iframeRect.top;
       }
 
+      // Create fragment to hold overlay elements
       const fragment = document.createDocumentFragment();
 
-      // ハイライト矩形を作成
+      // Create highlight overlays for each client rect
       for (const rect of rects) {
-        if (rect.width === 0 || rect.height === 0) continue;
+        if (rect.width === 0 || rect.height === 0) continue; // Skip empty rects
 
         const overlay = document.createElement("div");
         overlay.style.position = "fixed";
@@ -311,17 +328,10 @@
         overlay.style.height = `${rect.height}px`;
 
         fragment.appendChild(overlay);
-        overlays.push({ element: overlay, initialRect: rect });
-
-        // グローバルに登録
-        window._highlightRects.push({
-          top: top,
-          left: left,
-          right: left + rect.width,
-          bottom: top + rect.height,
-        });
+        overlays.push({ element: overlay, initialRect: rect }); // Store overlay and its rect
       }
 
+      // Create and position a single label relative to the first rect
       const firstRect = rects[0];
       label = document.createElement("div");
       label.className = "playwright-highlight-label";
@@ -336,231 +346,47 @@
       )}px`;
       label.textContent = index;
 
-      fragment.appendChild(label);
-      container.appendChild(fragment);
-
-      // ラベルのサイズを確認
-      // ...省略（今までのコードそのまま）
-
-      // ラベルサイズ取得後
-      labelWidth = label.offsetWidth > 0 ? label.offsetWidth : labelWidth;
-      labelHeight = label.offsetHeight > 0 ? label.offsetHeight : labelHeight;
+      labelWidth = label.offsetWidth > 0 ? label.offsetWidth : labelWidth; // Update actual width if possible
+      labelHeight = label.offsetHeight > 0 ? label.offsetHeight : labelHeight; // Update actual height if possible
 
       const firstRectTop = firstRect.top + iframeOffset.y;
       const firstRectLeft = firstRect.left + iframeOffset.x;
 
-      // 面積ベースの判定を追加
-      const elementArea = firstRect.width * firstRect.height;
-      const labelArea = labelWidth * labelHeight;
-      const occupiesLargeArea = labelArea / elementArea >= 0.25;
+      let labelTop = firstRectTop + 2;
+      let labelLeft = firstRectLeft + firstRect.width - labelWidth - 2;
 
-      // 元の幅・高さ比ベースも残す
-      const widthRatio = labelWidth / firstRect.width;
-      const heightRatio = labelHeight / firstRect.height;
-      const isBigEnough = widthRatio < 0.25 && heightRatio < 0.25;
-
-      // 絶対に外出しするフラグ
-      const mustPlaceOutside = occupiesLargeArea;
-
-      const insidePositions = [
-        { dx: firstRect.width - labelWidth - 2, dy: 2 }, // 右上
-        { dx: 2, dy: 2 }, // 左上
-        {
-          dx: firstRect.width - labelWidth - 2,
-          dy: firstRect.height - labelHeight - 2,
-        }, // 右下
-        { dx: 2, dy: firstRect.height - labelHeight - 2 }, // 左下
-      ];
-
-      const outsidePositions = [
-        { dx: firstRect.width - labelWidth, dy: -labelHeight - 4 },
-        { dx: (firstRect.width - labelWidth) / 2, dy: -labelHeight - 4 },
-        { dx: -labelWidth, dy: -labelHeight - 4 },
-        { dx: firstRect.width + 4, dy: 0 },
-        { dx: -labelWidth - 4, dy: 0 },
-        { dx: (firstRect.width - labelWidth) / 2, dy: firstRect.height + 4 },
-      ];
-
-      // 配置順決定
-      const tryPositions = mustPlaceOutside
-        ? [...outsidePositions]
-        : isBigEnough
-        ? [...insidePositions, ...outsidePositions]
-        : [...outsidePositions, ...insidePositions];
-
-      // 衝突判定関数
-      function isColliding(candidateRect) {
-        // 他のラベルと衝突していないか
-        for (const otherRect of window._labelRects || []) {
-          if (
-            !(
-              candidateRect.right < otherRect.left ||
-              candidateRect.left > otherRect.right ||
-              candidateRect.bottom < otherRect.top ||
-              candidateRect.top > otherRect.bottom
-            )
-          ) {
-            return true; // 衝突あり
-          }
-        }
-
-        // ハイライト要素（overlays）とも衝突していないか
-        for (const overlay of document.querySelectorAll(
-          ".playwright-highlight-overlay"
-        )) {
-          const rect = overlay.getBoundingClientRect();
-          if (
-            !(
-              candidateRect.right < rect.left ||
-              candidateRect.left > rect.right ||
-              candidateRect.bottom < rect.top ||
-              candidateRect.top > rect.bottom
-            )
-          ) {
-            return true; // 衝突あり
-          }
-        }
-
-        return false; // 衝突なし
+      // Adjust label position if first rect is too small
+      if (
+        firstRect.width < labelWidth + 4 ||
+        firstRect.height < labelHeight + 4
+      ) {
+        labelTop = firstRectTop - labelHeight - 2;
+        labelLeft = firstRectLeft + firstRect.width - labelWidth; // Align with right edge
+        if (labelLeft < iframeOffset.x) labelLeft = firstRectLeft; // Prevent going off-left
       }
 
+      // Ensure label stays within viewport bounds slightly better
+      labelTop = Math.max(
+        0,
+        Math.min(labelTop, window.innerHeight - labelHeight)
+      );
+      labelLeft = Math.max(
+        0,
+        Math.min(labelLeft, window.innerWidth - labelWidth)
+      );
 
-      let placed = false;
-      for (const pos of tryPositions) {
-        let candidateTop = firstRectTop + pos.dy;
-        let candidateLeft = firstRectLeft + pos.dx;
-        const rect = {
-          top: candidateTop,
-          left: candidateLeft,
-          right: candidateLeft + labelWidth,
-          bottom: candidateTop + labelHeight,
-        };
+      label.style.top = `${labelTop}px`;
+      label.style.left = `${labelLeft}px`;
 
-        rect.top = Math.max(
-          0,
-          Math.min(rect.top, window.innerHeight - labelHeight)
-        );
-        rect.left = Math.max(
-          0,
-          Math.min(rect.left, window.innerWidth - labelWidth)
-        );
-        rect.bottom = rect.top + labelHeight;
-        rect.right = rect.left + labelWidth;
+      fragment.appendChild(label);
 
-        if (!isColliding(rect)) {
-          label.style.top = `${rect.top}px`;
-          label.style.left = `${rect.left}px`;
-          window._labelRects.push(rect);
-          placed = true;
-          break;
-        }
-      }
-
-      // fallback: 全部衝突する場合
-      if (!placed) {
-        const elementArea = firstRect.width * firstRect.height;
-        const labelArea = labelWidth * labelHeight;
-        const occupiesLargeArea = labelArea / elementArea >= 0.25;
-
-        if (occupiesLargeArea) {
-          // 外側候補だけで試す
-          let bestPos = null;
-          for (const pos of outsidePositions) {
-            let candidateTop = firstRectTop + pos.dy;
-            let candidateLeft = firstRectLeft + pos.dx;
-
-            candidateTop = Math.max(
-              0,
-              Math.min(candidateTop, window.innerHeight - labelHeight)
-            );
-            candidateLeft = Math.max(
-              0,
-              Math.min(candidateLeft, window.innerWidth - labelWidth)
-            );
-
-            const rect = {
-              top: candidateTop,
-              left: candidateLeft,
-              right: candidateLeft + labelWidth,
-              bottom: candidateTop + labelHeight,
-            };
-
-            // 衝突しないものを見つけたら即採用
-            if (!isColliding(rect)) {
-              label.style.top = `${rect.top}px`;
-              label.style.left = `${rect.left}px`;
-              label.style.display = "block";
-              label._rect = rect;
-              window._labelRects.push(rect);
-              bestPos = true;
-              break;
-            }
-          }
-
-          if (!bestPos) {
-            // 外側でも衝突してる場合 → 一番最初の外側ポジションを強制的に使う
-            const pos = outsidePositions[0];
-            let fallbackTop = firstRectTop + pos.dy;
-            let fallbackLeft = firstRectLeft + pos.dx;
-            fallbackTop = Math.max(
-              0,
-              Math.min(fallbackTop, window.innerHeight - labelHeight)
-            );
-            fallbackLeft = Math.max(
-              0,
-              Math.min(fallbackLeft, window.innerWidth - labelWidth)
-            );
-
-            label.style.top = `${fallbackTop}px`;
-            label.style.left = `${fallbackLeft}px`;
-            label.style.display = "block";
-            window._labelRects.push({
-              top: fallbackTop,
-              left: fallbackLeft,
-              right: fallbackLeft + labelWidth,
-              bottom: fallbackTop + labelHeight,
-            });
-          }
-        } else {
-          // 元のfallback（従来のロジック）
-          let fallbackTop = firstRectTop + 2;
-          let fallbackLeft = firstRectLeft + firstRect.width - labelWidth - 2;
-          fallbackTop = Math.max(
-            0,
-            Math.min(fallbackTop, window.innerHeight - labelHeight)
-          );
-          fallbackLeft = Math.max(
-            0,
-            Math.min(fallbackLeft, window.innerWidth - labelWidth)
-          );
-          label.style.top = `${fallbackTop}px`;
-          label.style.left = `${fallbackLeft}px`;
-          window._labelRects.push({
-            top: fallbackTop,
-            left: fallbackLeft,
-            right: fallbackLeft + labelWidth,
-            bottom: fallbackTop + labelHeight,
-          });
-        }
-      }
-
-
-
-      const throttleFunction = (func, delay) => {
-        let lastCall = 0;
-        return (...args) => {
-          const now = performance.now();
-          if (now - lastCall < delay) return;
-          lastCall = now;
-          return func(...args);
-        };
-      };
+      // Update positions on scroll/resize
       const updatePositions = () => {
-        const newRects = element.getClientRects();
+        const newRects = element.getClientRects(); // Get fresh rects
         let newIframeOffset = { x: 0, y: 0 };
 
         if (parentIframe) {
-          const iframeRect = parentIframe.getBoundingClientRect();
+          const iframeRect = parentIframe.getBoundingClientRect(); // Keep getBoundingClientRect for iframe
           newIframeOffset.x = iframeRect.left;
           newIframeOffset.y = iframeRect.top;
         }
@@ -568,6 +394,7 @@
         // Update each overlay
         overlays.forEach((overlayData, i) => {
           if (i < newRects.length) {
+            // Check if rect still exists
             const newRect = newRects[i];
             const newTop = newRect.top + newIframeOffset.y;
             const newLeft = newRect.left + newIframeOffset.x;
@@ -579,214 +406,105 @@
             overlayData.element.style.display =
               newRect.width === 0 || newRect.height === 0 ? "none" : "block";
           } else {
+            // If fewer rects now, hide extra overlays
             overlayData.element.style.display = "none";
           }
         });
 
+        // If there are fewer new rects than overlays, hide the extras
         if (newRects.length < overlays.length) {
           for (let i = newRects.length; i < overlays.length; i++) {
             overlays[i].element.style.display = "none";
           }
         }
 
-        // ラベルの再配置
+        // Update label position based on the first new rect
         if (label && newRects.length > 0) {
           const firstNewRect = newRects[0];
           const firstNewRectTop = firstNewRect.top + newIframeOffset.y;
           const firstNewRectLeft = firstNewRect.left + newIframeOffset.x;
 
-          const elementArea = firstNewRect.width * firstNewRect.height;
-          const labelArea = labelWidth * labelHeight;
-          const occupiesLargeArea = labelArea / elementArea >= 0.25;
+          let newLabelTop = firstNewRectTop + 2;
+          let newLabelLeft =
+            firstNewRectLeft + firstNewRect.width - labelWidth - 2;
 
-          const widthRatio = labelWidth / firstNewRect.width;
-          const heightRatio = labelHeight / firstNewRect.height;
-          const isBigEnough = widthRatio < 0.25 && heightRatio < 0.25;
-
-          const mustPlaceOutside = occupiesLargeArea;
-
-          const insidePositions = [
-            { dx: firstNewRect.width - labelWidth - 2, dy: 2 }, // 右上
-            { dx: 2, dy: 2 }, // 左上
-            {
-              dx: firstNewRect.width - labelWidth - 2,
-              dy: firstNewRect.height - labelHeight - 2,
-            }, // 右下
-            { dx: 2, dy: firstNewRect.height - labelHeight - 2 }, // 左下
-          ];
-
-          const outsidePositions = [
-            { dx: firstNewRect.width - labelWidth, dy: -labelHeight - 4 },
-            { dx: (firstNewRect.width - labelWidth) / 2, dy: -labelHeight - 4 },
-            { dx: -labelWidth, dy: -labelHeight - 4 },
-            { dx: firstNewRect.width + 4, dy: 0 },
-            { dx: -labelWidth - 4, dy: 0 },
-            {
-              dx: (firstNewRect.width - labelWidth) / 2,
-              dy: firstNewRect.height + 4,
-            },
-          ];
-
-          const tryPositions = mustPlaceOutside
-            ? [...outsidePositions]
-            : isBigEnough
-            ? [...insidePositions, ...outsidePositions]
-            : [...outsidePositions, ...insidePositions];
-
-          let placed = false;
-          for (const pos of tryPositions) {
-            let candidateTop = firstNewRectTop + pos.dy;
-            let candidateLeft = firstNewRectLeft + pos.dx;
-            const rect = {
-              top: candidateTop,
-              left: candidateLeft,
-              right: candidateLeft + labelWidth,
-              bottom: candidateTop + labelHeight,
-            };
-
-            rect.top = Math.max(
-              0,
-              Math.min(rect.top, window.innerHeight - labelHeight)
-            );
-            rect.left = Math.max(
-              0,
-              Math.min(rect.left, window.innerWidth - labelWidth)
-            );
-            rect.bottom = rect.top + labelHeight;
-            rect.right = rect.left + labelWidth;
-
-            if (!isColliding(rect)) {
-              label.style.top = `${rect.top}px`;
-              label.style.left = `${rect.left}px`;
-              label.style.display = "block";
-              label._rect = rect; // 衝突リスト更新
-              placed = true;
-              break;
-            }
+          if (
+            firstNewRect.width < labelWidth + 4 ||
+            firstNewRect.height < labelHeight + 4
+          ) {
+            newLabelTop = firstNewRectTop - labelHeight - 2;
+            newLabelLeft = firstNewRectLeft + firstNewRect.width - labelWidth;
+            if (newLabelLeft < newIframeOffset.x)
+              newLabelLeft = firstNewRectLeft;
           }
 
-          if (!placed) {
-            const elementArea = firstRect.width * firstRect.height;
-            const labelArea = labelWidth * labelHeight;
-            const occupiesLargeArea = labelArea / elementArea >= 0.25;
+          // Ensure label stays within viewport bounds
+          newLabelTop = Math.max(
+            0,
+            Math.min(newLabelTop, window.innerHeight - labelHeight)
+          );
+          newLabelLeft = Math.max(
+            0,
+            Math.min(newLabelLeft, window.innerWidth - labelWidth)
+          );
 
-            if (occupiesLargeArea) {
-              // 外側候補だけで試す
-              let bestPos = null;
-              for (const pos of outsidePositions) {
-                let candidateTop = firstRectTop + pos.dy;
-                let candidateLeft = firstRectLeft + pos.dx;
-
-                candidateTop = Math.max(
-                  0,
-                  Math.min(candidateTop, window.innerHeight - labelHeight)
-                );
-                candidateLeft = Math.max(
-                  0,
-                  Math.min(candidateLeft, window.innerWidth - labelWidth)
-                );
-
-                const rect = {
-                  top: candidateTop,
-                  left: candidateLeft,
-                  right: candidateLeft + labelWidth,
-                  bottom: candidateTop + labelHeight,
-                };
-
-                // 衝突しないものを見つけたら即採用
-                if (!isColliding(rect)) {
-                  label.style.top = `${rect.top}px`;
-                  label.style.left = `${rect.left}px`;
-                  label.style.display = "block";
-                  label._rect = rect;
-                  window._labelRects.push(rect);
-                  bestPos = true;
-                  break;
-                }
-              }
-
-              if (!bestPos) {
-                // 外側でも衝突してる場合 → 一番最初の外側ポジションを強制的に使う
-                const pos = outsidePositions[0];
-                let fallbackTop = firstRectTop + pos.dy;
-                let fallbackLeft = firstRectLeft + pos.dx;
-                fallbackTop = Math.max(
-                  0,
-                  Math.min(fallbackTop, window.innerHeight - labelHeight)
-                );
-                fallbackLeft = Math.max(
-                  0,
-                  Math.min(fallbackLeft, window.innerWidth - labelWidth)
-                );
-
-                label.style.top = `${fallbackTop}px`;
-                label.style.left = `${fallbackLeft}px`;
-                label.style.display = "block";
-                window._labelRects.push({
-                  top: fallbackTop,
-                  left: fallbackLeft,
-                  right: fallbackLeft + labelWidth,
-                  bottom: fallbackTop + labelHeight,
-                });
-              }
-            } else {
-              // 元のfallback（従来のロジック）
-              let fallbackTop = firstRectTop + 2;
-              let fallbackLeft =
-                firstRectLeft + firstRect.width - labelWidth - 2;
-              fallbackTop = Math.max(
-                0,
-                Math.min(fallbackTop, window.innerHeight - labelHeight)
-              );
-              fallbackLeft = Math.max(
-                0,
-                Math.min(fallbackLeft, window.innerWidth - labelWidth)
-              );
-              label.style.top = `${fallbackTop}px`;
-              label.style.left = `${fallbackLeft}px`;
-              window._labelRects.push({
-                top: fallbackTop,
-                left: fallbackLeft,
-                right: fallbackLeft + labelWidth,
-                bottom: fallbackTop + labelHeight,
-              });
-            }
-          }
+          label.style.top = `${newLabelTop}px`;
+          label.style.left = `${newLabelLeft}px`;
+          label.style.display = "block";
         } else if (label) {
+          // Hide label if element has no rects anymore
           label.style.display = "none";
         }
       };
 
+      const throttleFunction = (func, delay) => {
+        let lastCall = 0;
+        return (...args) => {
+          const now = performance.now();
+          if (now - lastCall < delay) return;
+          lastCall = now;
+          return func(...args);
+        };
+      };
 
-      const throttledUpdatePositions = throttleFunction(updatePositions, 16);
+      const throttledUpdatePositions = throttleFunction(updatePositions, 16); // ~60fps
       window.addEventListener("scroll", throttledUpdatePositions, true);
       window.addEventListener("resize", throttledUpdatePositions);
 
+      // Add cleanup function
       cleanupFn = () => {
         window.removeEventListener("scroll", throttledUpdatePositions, true);
         window.removeEventListener("resize", throttledUpdatePositions);
+        // Remove overlay elements if needed
         overlays.forEach((overlay) => overlay.element.remove());
         if (label) label.remove();
       };
 
+      // Then add fragment to container in one operation
+      container.appendChild(fragment);
+
       return index + 1;
     } finally {
       popTiming("highlighting");
+      // Store cleanup function for later use
       if (cleanupFn) {
+        // Keep a reference to cleanup functions in a global array
         (window._highlightCleanupFunctions =
           window._highlightCleanupFunctions || []).push(cleanupFn);
       }
     }
   }
 
-
   // Add this function to perform cleanup when needed
   function cleanupHighlights() {
-    if (window._highlightCleanupFunctions && window._highlightCleanupFunctions.length) {
-      window._highlightCleanupFunctions.forEach(fn => fn());
+    if (
+      window._highlightCleanupFunctions &&
+      window._highlightCleanupFunctions.length
+    ) {
+      window._highlightCleanupFunctions.forEach((fn) => fn());
       window._highlightCleanupFunctions = [];
     }
-    
+
     // Also remove the container
     const container = document.getElementById(HIGHLIGHT_CONTAINER_ID);
     if (container) container.remove();
@@ -796,16 +514,17 @@
     if (!currentElement.parentElement) {
       return 0; // No parent means no siblings
     }
-  
+
     const tagName = currentElement.nodeName.toLowerCase();
-  
-    const siblings = Array.from(currentElement.parentElement.children)
-      .filter((sib) => sib.nodeName.toLowerCase() === tagName);
-  
+
+    const siblings = Array.from(currentElement.parentElement.children).filter(
+      (sib) => sib.nodeName.toLowerCase() === tagName
+    );
+
     if (siblings.length === 1) {
       return 0; // Only element of its type
     }
-  
+
     const index = siblings.indexOf(currentElement) + 1; // 1-based index
     return index;
   }
@@ -815,7 +534,7 @@
    */
   function getXPathTree(element, stopAtBoundary = true) {
     if (xpathCache.has(element)) return xpathCache.get(element);
-    
+
     const segments = [];
     let currentElement = element;
 
@@ -861,12 +580,14 @@
         } catch (e) {
           // Fallback if checkVisibility is not supported
           const style = window.getComputedStyle(parentElement);
-          return style.display !== 'none' &&
-            style.visibility !== 'hidden' &&
-            style.opacity !== '0';
+          return (
+            style.display !== "none" &&
+            style.visibility !== "hidden" &&
+            style.opacity !== "0"
+          );
         }
       }
-      
+
       const range = document.createRange();
       range.selectNodeContents(textNode);
       const rects = range.getClientRects(); // Use getClientRects for Range
@@ -884,12 +605,14 @@
           isAnyRectVisible = true;
 
           // Viewport check for this rect
-          if (!(
-            rect.bottom < -viewportExpansion ||
-            rect.top > window.innerHeight + viewportExpansion ||
-            rect.right < -viewportExpansion ||
-            rect.left > window.innerWidth + viewportExpansion
-          )) {
+          if (
+            !(
+              rect.bottom < -viewportExpansion ||
+              rect.top > window.innerHeight + viewportExpansion ||
+              rect.right < -viewportExpansion ||
+              rect.left > window.innerWidth + viewportExpansion
+            )
+          ) {
             isAnyRectInViewport = true;
             break; // Found a visible rect in viewport, no need to check others
           }
@@ -912,12 +635,14 @@
       } catch (e) {
         // Fallback if checkVisibility is not supported
         const style = window.getComputedStyle(parentElement);
-        return style.display !== 'none' &&
-          style.visibility !== 'hidden' &&
-          style.opacity !== '0';
+        return (
+          style.display !== "none" &&
+          style.visibility !== "hidden" &&
+          style.opacity !== "0"
+        );
       }
     } catch (e) {
-      console.warn('Error checking text node visibility:', e);
+      console.warn("Error checking text node visibility:", e);
       return false;
     }
   }
@@ -928,7 +653,14 @@
 
     // Always accept body and common container elements
     const alwaysAccept = new Set([
-      "body", "div", "main", "article", "section", "nav", "header", "footer"
+      "body",
+      "div",
+      "main",
+      "article",
+      "section",
+      "nav",
+      "header",
+      "footer",
     ]);
     const tagName = element.tagName.toLowerCase();
 
@@ -962,9 +694,9 @@
 
   /**
    * Checks if an element is interactive.
-   * 
+   *
    * lots of comments, and uncommented code - to show the logic of what we already tried
-   * 
+   *
    * One of the things we tried at the beginning was also to use event listeners, and other fancy class, style stuff -> what actually worked best was just combining most things with computed cursor style :)
    */
   function isInteractiveElement(element) {
@@ -978,48 +710,48 @@
 
     // Define interactive cursors
     const interactiveCursors = new Set([
-      'pointer',    // Link/clickable elements
-      'move',       // Movable elements
-      'text',       // Text selection
-      'grab',       // Grabbable elements
-      'grabbing',   // Currently grabbing
-      'cell',       // Table cell selection
-      'copy',       // Copy operation
-      'alias',      // Alias creation
-      'all-scroll', // Scrollable content
-      'col-resize', // Column resize
-      'context-menu', // Context menu available
-      'crosshair',  // Precise selection
-      'e-resize',   // East resize
-      'ew-resize',  // East-west resize
-      'help',       // Help available
-      'n-resize',   // North resize
-      'ne-resize',  // Northeast resize
-      'nesw-resize', // Northeast-southwest resize
-      'ns-resize',  // North-south resize
-      'nw-resize',  // Northwest resize
-      'nwse-resize', // Northwest-southeast resize
-      'row-resize', // Row resize
-      's-resize',   // South resize
-      'se-resize',  // Southeast resize
-      'sw-resize',  // Southwest resize
-      'vertical-text', // Vertical text selection
-      'w-resize',   // West resize
-      'zoom-in',    // Zoom in
-      'zoom-out'    // Zoom out
+      "pointer", // Link/clickable elements
+      "move", // Movable elements
+      "text", // Text selection
+      "grab", // Grabbable elements
+      "grabbing", // Currently grabbing
+      "cell", // Table cell selection
+      "copy", // Copy operation
+      "alias", // Alias creation
+      "all-scroll", // Scrollable content
+      "col-resize", // Column resize
+      "context-menu", // Context menu available
+      "crosshair", // Precise selection
+      "e-resize", // East resize
+      "ew-resize", // East-west resize
+      "help", // Help available
+      "n-resize", // North resize
+      "ne-resize", // Northeast resize
+      "nesw-resize", // Northeast-southwest resize
+      "ns-resize", // North-south resize
+      "nw-resize", // Northwest resize
+      "nwse-resize", // Northwest-southeast resize
+      "row-resize", // Row resize
+      "s-resize", // South resize
+      "se-resize", // Southeast resize
+      "sw-resize", // Southwest resize
+      "vertical-text", // Vertical text selection
+      "w-resize", // West resize
+      "zoom-in", // Zoom in
+      "zoom-out", // Zoom out
     ]);
 
     // Define non-interactive cursors
     const nonInteractiveCursors = new Set([
-      'not-allowed', // Action not allowed
-      'no-drop',     // Drop not allowed
-      'wait',        // Processing
-      'progress',    // In progress
-      'initial',     // Initial value
-      'inherit'      // Inherited value
+      "not-allowed", // Action not allowed
+      "no-drop", // Drop not allowed
+      "wait", // Processing
+      "progress", // In progress
+      "initial", // Initial value
+      "inherit", // Inherited value
       //? Let's just include all potentially clickable elements that are not specifically blocked
       // 'none',        // No cursor
-      // 'default',     // Default cursor 
+      // 'default',     // Default cursor
       // 'auto',        // Browser default
     ]);
 
@@ -1039,25 +771,25 @@
     }
 
     const interactiveElements = new Set([
-      "a",          // Links
-      "button",     // Buttons
-      "input",      // All input types (text, checkbox, radio, etc.)
-      "select",     // Dropdown menus
-      "textarea",   // Text areas
-      "details",    // Expandable details
-      "summary",    // Summary element (clickable part of details)
-      "label",      // Form labels (often clickable)
-      "option",     // Select options
-      "optgroup",   // Option groups
-      "fieldset",   // Form fieldsets (can be interactive with legend)
-      "legend",     // Fieldset legends
+      "a", // Links
+      "button", // Buttons
+      "input", // All input types (text, checkbox, radio, etc.)
+      "select", // Dropdown menus
+      "textarea", // Text areas
+      "details", // Expandable details
+      "summary", // Summary element (clickable part of details)
+      "label", // Form labels (often clickable)
+      "option", // Select options
+      "optgroup", // Option groups
+      "fieldset", // Form fieldsets (can be interactive with legend)
+      "legend", // Fieldset legends
     ]);
 
     // Define explicit disable attributes and properties
     const explicitDisableTags = new Set([
-      'disabled',           // Standard disabled attribute
+      "disabled", // Standard disabled attribute
       // 'aria-disabled',      // ARIA disabled state
-      'readonly',          // Read-only state
+      "readonly", // Read-only state
       // 'aria-readonly',     // ARIA read-only state
       // 'aria-hidden',       // Hidden from accessibility
       // 'hidden',            // Hidden attribute
@@ -1076,9 +808,11 @@
 
       // Check for explicit disable attributes
       for (const disableTag of explicitDisableTags) {
-        if (element.hasAttribute(disableTag) ||
-          element.getAttribute(disableTag) === 'true' ||
-          element.getAttribute(disableTag) === '') {
+        if (
+          element.hasAttribute(disableTag) ||
+          element.getAttribute(disableTag) === "true" ||
+          element.getAttribute(disableTag) === ""
+        ) {
           return false;
         }
       }
@@ -1105,39 +839,43 @@
     const ariaRole = element.getAttribute("aria-role");
 
     // Check for contenteditable attribute
-    if (element.getAttribute("contenteditable") === "true" || element.isContentEditable) {
+    if (
+      element.getAttribute("contenteditable") === "true" ||
+      element.isContentEditable
+    ) {
       return true;
     }
-    
+
     // Added enhancement to capture dropdown interactive elements
-    if (element.classList && (
-      element.classList.contains("button") ||
-      element.classList.contains('dropdown-toggle') ||
-      element.getAttribute('data-index') ||
-      element.getAttribute('data-toggle') === 'dropdown' ||
-      element.getAttribute('aria-haspopup') === 'true'
-    )) {
+    if (
+      element.classList &&
+      (element.classList.contains("button") ||
+        element.classList.contains("dropdown-toggle") ||
+        element.getAttribute("data-index") ||
+        element.getAttribute("data-toggle") === "dropdown" ||
+        element.getAttribute("aria-haspopup") === "true")
+    ) {
       return true;
     }
 
     const interactiveRoles = new Set([
-      'button',           // Directly clickable element
+      "button", // Directly clickable element
       // 'link',            // Clickable link
       // 'menuitem',        // Clickable menu item
-      'menuitemradio',   // Radio-style menu item (selectable)
-      'menuitemcheckbox', // Checkbox-style menu item (toggleable)
-      'radio',           // Radio button (selectable)
-      'checkbox',        // Checkbox (toggleable)
-      'tab',             // Tab (clickable to switch content)
-      'switch',          // Toggle switch (clickable to change state)
-      'slider',          // Slider control (draggable)
-      'spinbutton',      // Number input with up/down controls
-      'combobox',        // Dropdown with text input
-      'searchbox',       // Search input field
-      'textbox',         // Text input field
+      "menuitemradio", // Radio-style menu item (selectable)
+      "menuitemcheckbox", // Checkbox-style menu item (toggleable)
+      "radio", // Radio button (selectable)
+      "checkbox", // Checkbox (toggleable)
+      "tab", // Tab (clickable to switch content)
+      "switch", // Toggle switch (clickable to change state)
+      "slider", // Slider control (draggable)
+      "spinbutton", // Number input with up/down controls
+      "combobox", // Dropdown with text input
+      "searchbox", // Search input field
+      "textbox", // Text input field
       // 'listbox',         // Selectable list
-      'option',          // Selectable option in a list
-      'scrollbar'        // Scrollable control
+      "option", // Selectable option in a list
+      "scrollbar", // Scrollable control
     ]);
 
     // Basic role/attribute checks
@@ -1150,9 +888,9 @@
 
     // check whether element has event listeners
     try {
-      if (typeof getEventListeners === 'function') {
+      if (typeof getEventListeners === "function") {
         const listeners = getEventListeners(element);
-        const mouseEvents = ['click', 'mousedown', 'mouseup', 'dblclick'];
+        const mouseEvents = ["click", "mousedown", "mouseup", "dblclick"];
         for (const eventType of mouseEvents) {
           if (listeners[eventType] && listeners[eventType].length > 0) {
             return true; // Found a mouse interaction listener
@@ -1160,8 +898,13 @@
         }
       } else {
         // Fallback: Check common event attributes if getEventListeners is not available
-        const commonMouseAttrs = ['onclick', 'onmousedown', 'onmouseup', 'ondblclick'];
-        if (commonMouseAttrs.some(attr => element.hasAttribute(attr))) {
+        const commonMouseAttrs = [
+          "onclick",
+          "onmousedown",
+          "onmouseup",
+          "ondblclick",
+        ];
+        if (commonMouseAttrs.some((attr) => element.hasAttribute(attr))) {
           return true;
         }
       }
@@ -1170,9 +913,8 @@
       // If checking listeners fails, rely on other checks
     }
 
-    return false
+    return false;
   }
-
 
   /**
    * Checks if an element is the topmost element at its position.
@@ -1182,7 +924,7 @@
     if (viewportExpansion === -1) {
       return true;
     }
-    
+
     const rects = getCachedClientRects(element); // Replace element.getClientRects()
 
     if (!rects || rects.length === 0) {
@@ -1192,12 +934,19 @@
     let isAnyRectInViewport = false;
     for (const rect of rects) {
       // Use the same logic as isInExpandedViewport check
-      if (rect.width > 0 && rect.height > 0 && !( // Only check non-empty rects
-        rect.bottom < -viewportExpansion ||
-        rect.top > window.innerHeight + viewportExpansion ||
-        rect.right < -viewportExpansion ||
-        rect.left > window.innerWidth + viewportExpansion
-      )) {
+      if (
+        rect.width > 0 &&
+        rect.height > 0 &&
+        !(
+          // Only check non-empty rects
+          (
+            rect.bottom < -viewportExpansion ||
+            rect.top > window.innerHeight + viewportExpansion ||
+            rect.right < -viewportExpansion ||
+            rect.left > window.innerWidth + viewportExpansion
+          )
+        )
+      ) {
         isAnyRectInViewport = true;
         break;
       }
@@ -1206,7 +955,6 @@
     if (!isAnyRectInViewport) {
       return false; // All rects are outside the viewport area
     }
-
 
     // Find the correct document context and root element
     let doc = element.ownerDocument;
@@ -1219,13 +967,17 @@
     // For shadow DOM, we need to check within its own root context
     const shadowRoot = element.getRootNode();
     if (shadowRoot instanceof ShadowRoot) {
-      const centerX = rects[Math.floor(rects.length / 2)].left + rects[Math.floor(rects.length / 2)].width / 2;
-      const centerY = rects[Math.floor(rects.length / 2)].top + rects[Math.floor(rects.length / 2)].height / 2;
+      const centerX =
+        rects[Math.floor(rects.length / 2)].left +
+        rects[Math.floor(rects.length / 2)].width / 2;
+      const centerY =
+        rects[Math.floor(rects.length / 2)].top +
+        rects[Math.floor(rects.length / 2)].height / 2;
 
       try {
         const topEl = measureDomOperation(
           () => shadowRoot.elementFromPoint(centerX, centerY),
-          'elementFromPoint'
+          "elementFromPoint"
         );
         if (!topEl) return false;
 
@@ -1241,8 +993,12 @@
     }
 
     // For elements in viewport, check if they're topmost
-    const centerX = rects[Math.floor(rects.length / 2)].left + rects[Math.floor(rects.length / 2)].width / 2;
-    const centerY = rects[Math.floor(rects.length / 2)].top + rects[Math.floor(rects.length / 2)].height / 2;
+    const centerX =
+      rects[Math.floor(rects.length / 2)].left +
+      rects[Math.floor(rects.length / 2)].width / 2;
+    const centerY =
+      rects[Math.floor(rects.length / 2)].top +
+      rects[Math.floor(rects.length / 2)].height / 2;
 
     try {
       const topEl = document.elementFromPoint(centerX, centerY);
@@ -1273,7 +1029,11 @@
       // Fallback to getBoundingClientRect if getClientRects is empty,
       // useful for elements like <svg> that might not have client rects but have a bounding box.
       const boundingRect = getCachedBoundingRect(element);
-      if (!boundingRect || boundingRect.width === 0 || boundingRect.height === 0) {
+      if (
+        !boundingRect ||
+        boundingRect.width === 0 ||
+        boundingRect.height === 0
+      ) {
         return false;
       }
       return !(
@@ -1288,12 +1048,14 @@
     for (const rect of rects) {
       if (rect.width === 0 || rect.height === 0) continue; // Skip empty rects
 
-      if (!(
-        rect.bottom < -viewportExpansion ||
-        rect.top > window.innerHeight + viewportExpansion ||
-        rect.right < -viewportExpansion ||
-        rect.left > window.innerWidth + viewportExpansion
-      )) {
+      if (
+        !(
+          rect.bottom < -viewportExpansion ||
+          rect.top > window.innerHeight + viewportExpansion ||
+          rect.right < -viewportExpansion ||
+          rect.left > window.innerWidth + viewportExpansion
+        )
+      ) {
         return true; // Found at least one rect in the viewport
       }
     }
@@ -1320,7 +1082,7 @@
       scrollY += window.scrollY;
 
       return { scrollX, scrollY };
-    }, 'scrollOperations');
+    }, "scrollOperations");
   }
 
   // Add these helper functions at the top level
@@ -1331,13 +1093,20 @@
 
     // Fast-path for common interactive elements
     const interactiveElements = new Set([
-      "a", "button", "input", "select", "textarea", "details", "summary"
+      "a",
+      "button",
+      "input",
+      "select",
+      "textarea",
+      "details",
+      "summary",
     ]);
 
     if (interactiveElements.has(tagName)) return true;
 
     // Quick attribute checks without getting full lists
-    const hasQuickInteractiveAttr = element.hasAttribute("onclick") ||
+    const hasQuickInteractiveAttr =
+      element.hasAttribute("onclick") ||
       element.hasAttribute("role") ||
       element.hasAttribute("tabindex") ||
       element.hasAttribute("aria-") ||
@@ -1349,12 +1118,34 @@
 
   // --- Define constants for distinct interaction check ---
   const DISTINCT_INTERACTIVE_TAGS = new Set([
-    'a', 'button', 'input', 'select', 'textarea', 'summary', 'details', 'label', 'option'
+    "a",
+    "button",
+    "input",
+    "select",
+    "textarea",
+    "summary",
+    "details",
+    "label",
+    "option",
   ]);
   const INTERACTIVE_ROLES = new Set([
-    'button', 'link', 'menuitem', 'menuitemradio', 'menuitemcheckbox',
-    'radio', 'checkbox', 'tab', 'switch', 'slider', 'spinbutton',
-    'combobox', 'searchbox', 'textbox', 'listbox', 'option', 'scrollbar'
+    "button",
+    "link",
+    "menuitem",
+    "menuitemradio",
+    "menuitemcheckbox",
+    "radio",
+    "checkbox",
+    "tab",
+    "switch",
+    "slider",
+    "spinbutton",
+    "combobox",
+    "searchbox",
+    "textbox",
+    "listbox",
+    "option",
+    "scrollbar",
   ]);
 
   /**
@@ -1367,10 +1158,10 @@
     }
 
     const tagName = element.tagName.toLowerCase();
-    const role = element.getAttribute('role');
+    const role = element.getAttribute("role");
 
     // Check if it's an iframe - always distinct boundary
-    if (tagName === 'iframe') {
+    if (tagName === "iframe") {
       return true;
     }
 
@@ -1383,23 +1174,43 @@
       return true;
     }
     // Check contenteditable
-    if (element.isContentEditable || element.getAttribute('contenteditable') === 'true') {
+    if (
+      element.isContentEditable ||
+      element.getAttribute("contenteditable") === "true"
+    ) {
       return true;
     }
     // Check for common testing/automation attributes
-    if (element.hasAttribute('data-testid') || element.hasAttribute('data-cy') || element.hasAttribute('data-test')) {
+    if (
+      element.hasAttribute("data-testid") ||
+      element.hasAttribute("data-cy") ||
+      element.hasAttribute("data-test")
+    ) {
       return true;
     }
     // Check for explicit onclick handler (attribute or property)
-    if (element.hasAttribute('onclick') || typeof element.onclick === 'function') {
+    if (
+      element.hasAttribute("onclick") ||
+      typeof element.onclick === "function"
+    ) {
       return true;
     }
     // Check for other common interaction event listeners
     try {
       const getEventListeners = window.getEventListenersForNode;
-      if (typeof getEventListeners === 'function') {
+      if (typeof getEventListeners === "function") {
         const listeners = getEventListeners(element);
-        const interactionEvents = ['mousedown', 'mouseup', 'keydown', 'keyup', 'submit', 'change', 'input', 'focus', 'blur'];
+        const interactionEvents = [
+          "mousedown",
+          "mouseup",
+          "keydown",
+          "keyup",
+          "submit",
+          "change",
+          "input",
+          "focus",
+          "blur",
+        ];
         for (const eventType of interactionEvents) {
           if (listeners[eventType] && listeners[eventType].length > 0) {
             return true; // Found a common interaction listener
@@ -1407,8 +1218,18 @@
         }
       } else {
         // Fallback: Check common event attributes if getEventListeners is not available
-        const commonEventAttrs = ['onmousedown', 'onmouseup', 'onkeydown', 'onkeyup', 'onsubmit', 'onchange', 'oninput', 'onfocus', 'onblur'];
-        if (commonEventAttrs.some(attr => element.hasAttribute(attr))) {
+        const commonEventAttrs = [
+          "onmousedown",
+          "onmouseup",
+          "onkeydown",
+          "onkeyup",
+          "onsubmit",
+          "onchange",
+          "oninput",
+          "onfocus",
+          "onblur",
+        ];
+        if (commonEventAttrs.some((attr) => element.hasAttribute(attr))) {
           return true;
         }
       }
@@ -1416,7 +1237,6 @@
       // console.warn(`Could not check event listeners for ${element.tagName}:`, e);
       // If checking listeners fails, rely on other checks
     }
-
 
     // Default to false: if it's interactive but doesn't match above,
     // assume it triggers the same action as the parent.
@@ -1427,7 +1247,12 @@
   /**
    * Handles the logic for deciding whether to highlight an element and performing the highlight.
    */
-  function handleHighlighting(nodeData, node, parentIframe, isParentHighlighted) {
+  function handleHighlighting(
+    nodeData,
+    node,
+    parentIframe,
+    isParentHighlighted
+  ) {
     if (!nodeData.isInteractive) return false; // Not interactive, definitely don't highlight
 
     let shouldHighlight = false;
@@ -1447,7 +1272,7 @@
     if (shouldHighlight) {
       // Check viewport status before assigning index and highlighting
       nodeData.isInViewport = isInExpandedViewport(node, viewportExpansion);
-      
+
       // When viewportExpansion is -1, all interactive elements should get a highlight index
       // regardless of viewport status
       if (nodeData.isInViewport || viewportExpansion === -1) {
@@ -1474,10 +1299,17 @@
   /**
    * Creates a node data object for a given node and its descendants.
    */
-  function buildDomTree(node, parentIframe = null, isParentHighlighted = false) {
+  function buildDomTree(
+    node,
+    parentIframe = null,
+    isParentHighlighted = false
+  ) {
     // Fast rejection checks first
-    if (!node || node.id === HIGHLIGHT_CONTAINER_ID || 
-        (node.nodeType !== Node.ELEMENT_NODE && node.nodeType !== Node.TEXT_NODE)) {
+    if (
+      !node ||
+      node.id === HIGHLIGHT_CONTAINER_ID ||
+      (node.nodeType !== Node.ELEMENT_NODE && node.nodeType !== Node.TEXT_NODE)
+    ) {
       if (debugMode) PERF_METRICS.nodeMetrics.skippedNodes++;
       return null;
     }
@@ -1492,9 +1324,9 @@
     // Special handling for root node (body)
     if (node === document.body) {
       const nodeData = {
-        tagName: 'body',
+        tagName: "body",
         attributes: {},
-        xpath: '/body',
+        xpath: "/body",
         children: [],
       };
 
@@ -1511,7 +1343,10 @@
     }
 
     // Early bailout for non-element nodes except text
-    if (node.nodeType !== Node.ELEMENT_NODE && node.nodeType !== Node.TEXT_NODE) {
+    if (
+      node.nodeType !== Node.ELEMENT_NODE &&
+      node.nodeType !== Node.TEXT_NODE
+    ) {
       if (debugMode) PERF_METRICS.nodeMetrics.skippedNodes++;
       return null;
     }
@@ -1526,7 +1361,7 @@
 
       // Only check visibility for text nodes that might be visible
       const parentElement = node.parentElement;
-      if (!parentElement || parentElement.tagName.toLowerCase() === 'script') {
+      if (!parentElement || parentElement.tagName.toLowerCase() === "script") {
         if (debugMode) PERF_METRICS.nodeMetrics.skippedNodes++;
         return null;
       }
@@ -1553,19 +1388,23 @@
       const style = getCachedComputedStyle(node);
 
       // Skip viewport check for fixed/sticky elements as they may appear anywhere
-      const isFixedOrSticky = style && (style.position === 'fixed' || style.position === 'sticky');
+      const isFixedOrSticky =
+        style && (style.position === "fixed" || style.position === "sticky");
 
       // Check if element has actual dimensions using offsetWidth/Height (quick check)
       const hasSize = node.offsetWidth > 0 || node.offsetHeight > 0;
 
       // Use getBoundingClientRect for the quick OUTSIDE check.
       // isInExpandedViewport will do the more accurate check later if needed.
-      if (!rect || (!isFixedOrSticky && !hasSize && (
-        rect.bottom < -viewportExpansion ||
-        rect.top > window.innerHeight + viewportExpansion ||
-        rect.right < -viewportExpansion ||
-        rect.left > window.innerWidth + viewportExpansion
-      ))) {
+      if (
+        !rect ||
+        (!isFixedOrSticky &&
+          !hasSize &&
+          (rect.bottom < -viewportExpansion ||
+            rect.top > window.innerHeight + viewportExpansion ||
+            rect.right < -viewportExpansion ||
+            rect.left > window.innerWidth + viewportExpansion))
+      ) {
         // console.log("Skipping node outside viewport (quick check):", node.tagName, rect);
         if (debugMode) PERF_METRICS.nodeMetrics.skippedNodes++;
         return null;
@@ -1581,7 +1420,11 @@
     };
 
     // Get attributes for interactive elements or potential text containers
-    if (isInteractiveCandidate(node) || node.tagName.toLowerCase() === 'iframe' || node.tagName.toLowerCase() === 'body') {
+    if (
+      isInteractiveCandidate(node) ||
+      node.tagName.toLowerCase() === "iframe" ||
+      node.tagName.toLowerCase() === "body"
+    ) {
       const attributeNames = node.getAttributeNames?.() || [];
       for (const name of attributeNames) {
         nodeData.attributes[name] = node.getAttribute(name);
@@ -1597,7 +1440,12 @@
         if (nodeData.isTopElement) {
           nodeData.isInteractive = isInteractiveElement(node);
           // Call the dedicated highlighting function
-          nodeWasHighlighted = handleHighlighting(nodeData, node, parentIframe, isParentHighlighted);
+          nodeWasHighlighted = handleHighlighting(
+            nodeData,
+            node,
+            parentIframe,
+            isParentHighlighted
+          );
         }
       }
     }
@@ -1609,7 +1457,8 @@
       // Handle iframes
       if (tagName === "iframe") {
         try {
-          const iframeDoc = node.contentDocument || node.contentWindow?.document;
+          const iframeDoc =
+            node.contentDocument || node.contentWindow?.document;
           if (iframeDoc) {
             for (const child of iframeDoc.childNodes) {
               const domElement = buildDomTree(child, node, false);
@@ -1630,31 +1479,47 @@
       ) {
         // Process all child nodes to capture formatted text
         for (const child of node.childNodes) {
-          const domElement = buildDomTree(child, parentIframe, nodeWasHighlighted);
+          const domElement = buildDomTree(
+            child,
+            parentIframe,
+            nodeWasHighlighted
+          );
           if (domElement) nodeData.children.push(domElement);
         }
-      }
-      else {
+      } else {
         // Handle shadow DOM
         if (node.shadowRoot) {
           nodeData.shadowRoot = true;
           for (const child of node.shadowRoot.childNodes) {
-            const domElement = buildDomTree(child, parentIframe, nodeWasHighlighted);
+            const domElement = buildDomTree(
+              child,
+              parentIframe,
+              nodeWasHighlighted
+            );
             if (domElement) nodeData.children.push(domElement);
           }
         }
         // Handle regular elements
         for (const child of node.childNodes) {
           // Pass the highlighted status of the *current* node to its children
-          const passHighlightStatusToChild = nodeWasHighlighted || isParentHighlighted;
-          const domElement = buildDomTree(child, parentIframe, passHighlightStatusToChild);
+          const passHighlightStatusToChild =
+            nodeWasHighlighted || isParentHighlighted;
+          const domElement = buildDomTree(
+            child,
+            parentIframe,
+            passHighlightStatusToChild
+          );
           if (domElement) nodeData.children.push(domElement);
         }
       }
     }
 
     // Skip empty anchor tags
-    if (nodeData.tagName === 'a' && nodeData.children.length === 0 && !nodeData.attributes.href) {
+    if (
+      nodeData.tagName === "a" &&
+      nodeData.children.length === 0 &&
+      !nodeData.attributes.href
+    ) {
       if (debugMode) PERF_METRICS.nodeMetrics.skippedNodes++;
       return null;
     }
@@ -1683,54 +1548,67 @@
   // Only process metrics in debug mode
   if (debugMode && PERF_METRICS) {
     // Convert timings to seconds and add useful derived metrics
-    Object.keys(PERF_METRICS.timings).forEach(key => {
+    Object.keys(PERF_METRICS.timings).forEach((key) => {
       PERF_METRICS.timings[key] = PERF_METRICS.timings[key] / 1000;
     });
 
-    Object.keys(PERF_METRICS.buildDomTreeBreakdown).forEach(key => {
-      if (typeof PERF_METRICS.buildDomTreeBreakdown[key] === 'number') {
-        PERF_METRICS.buildDomTreeBreakdown[key] = PERF_METRICS.buildDomTreeBreakdown[key] / 1000;
+    Object.keys(PERF_METRICS.buildDomTreeBreakdown).forEach((key) => {
+      if (typeof PERF_METRICS.buildDomTreeBreakdown[key] === "number") {
+        PERF_METRICS.buildDomTreeBreakdown[key] =
+          PERF_METRICS.buildDomTreeBreakdown[key] / 1000;
       }
     });
 
     // Add some useful derived metrics
     if (PERF_METRICS.buildDomTreeBreakdown.buildDomTreeCalls > 0) {
       PERF_METRICS.buildDomTreeBreakdown.averageTimePerNode =
-        PERF_METRICS.buildDomTreeBreakdown.totalTime / PERF_METRICS.buildDomTreeBreakdown.buildDomTreeCalls;
+        PERF_METRICS.buildDomTreeBreakdown.totalTime /
+        PERF_METRICS.buildDomTreeBreakdown.buildDomTreeCalls;
     }
 
     PERF_METRICS.buildDomTreeBreakdown.timeInChildCalls =
-      PERF_METRICS.buildDomTreeBreakdown.totalTime - PERF_METRICS.buildDomTreeBreakdown.totalSelfTime;
+      PERF_METRICS.buildDomTreeBreakdown.totalTime -
+      PERF_METRICS.buildDomTreeBreakdown.totalSelfTime;
 
     // Add average time per operation to the metrics
-    Object.keys(PERF_METRICS.buildDomTreeBreakdown.domOperations).forEach(op => {
-      const time = PERF_METRICS.buildDomTreeBreakdown.domOperations[op];
-      const count = PERF_METRICS.buildDomTreeBreakdown.domOperationCounts[op];
-      if (count > 0) {
-        PERF_METRICS.buildDomTreeBreakdown.domOperations[`${op}Average`] = time / count;
+    Object.keys(PERF_METRICS.buildDomTreeBreakdown.domOperations).forEach(
+      (op) => {
+        const time = PERF_METRICS.buildDomTreeBreakdown.domOperations[op];
+        const count = PERF_METRICS.buildDomTreeBreakdown.domOperationCounts[op];
+        if (count > 0) {
+          PERF_METRICS.buildDomTreeBreakdown.domOperations[`${op}Average`] =
+            time / count;
+        }
       }
-    });
+    );
 
     // Calculate cache hit rates
-    const boundingRectTotal = PERF_METRICS.cacheMetrics.boundingRectCacheHits + PERF_METRICS.cacheMetrics.boundingRectCacheMisses;
-    const computedStyleTotal = PERF_METRICS.cacheMetrics.computedStyleCacheHits + PERF_METRICS.cacheMetrics.computedStyleCacheMisses;
+    const boundingRectTotal =
+      PERF_METRICS.cacheMetrics.boundingRectCacheHits +
+      PERF_METRICS.cacheMetrics.boundingRectCacheMisses;
+    const computedStyleTotal =
+      PERF_METRICS.cacheMetrics.computedStyleCacheHits +
+      PERF_METRICS.cacheMetrics.computedStyleCacheMisses;
 
     if (boundingRectTotal > 0) {
-      PERF_METRICS.cacheMetrics.boundingRectHitRate = PERF_METRICS.cacheMetrics.boundingRectCacheHits / boundingRectTotal;
+      PERF_METRICS.cacheMetrics.boundingRectHitRate =
+        PERF_METRICS.cacheMetrics.boundingRectCacheHits / boundingRectTotal;
     }
 
     if (computedStyleTotal > 0) {
-      PERF_METRICS.cacheMetrics.computedStyleHitRate = PERF_METRICS.cacheMetrics.computedStyleCacheHits / computedStyleTotal;
+      PERF_METRICS.cacheMetrics.computedStyleHitRate =
+        PERF_METRICS.cacheMetrics.computedStyleCacheHits / computedStyleTotal;
     }
 
-    if ((boundingRectTotal + computedStyleTotal) > 0) {
+    if (boundingRectTotal + computedStyleTotal > 0) {
       PERF_METRICS.cacheMetrics.overallHitRate =
-        (PERF_METRICS.cacheMetrics.boundingRectCacheHits + PERF_METRICS.cacheMetrics.computedStyleCacheHits) /
+        (PERF_METRICS.cacheMetrics.boundingRectCacheHits +
+          PERF_METRICS.cacheMetrics.computedStyleCacheHits) /
         (boundingRectTotal + computedStyleTotal);
     }
   }
 
-  return debugMode ?
-    { rootId, map: DOM_HASH_MAP, perfMetrics: PERF_METRICS } :
-    { rootId, map: DOM_HASH_MAP };
+  return debugMode
+    ? { rootId, map: DOM_HASH_MAP, perfMetrics: PERF_METRICS }
+    : { rootId, map: DOM_HASH_MAP };
 };
