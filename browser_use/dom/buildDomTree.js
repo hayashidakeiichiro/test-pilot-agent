@@ -334,6 +334,7 @@
           left: left,
           right: left + rect.width,
           bottom: top + rect.height,
+          sourceIndex: index,
         });
       }
 
@@ -473,7 +474,7 @@
 
       container.appendChild(fragment);
 
-      return { index: index + 1, label }; // label を返す
+      return { index, label }; // label を返す
     } finally {
       popTiming("highlighting");
       if (cleanupFn) {
@@ -1269,7 +1270,7 @@
         if (doHighlightElements) {
           if (focusHighlightIndex >= 0) {
             if (focusHighlightIndex === nodeData.highlightIndex) {
-              const { label } = highlightElement(
+              const { label, index } = highlightElement(
                 node,
                 nodeData.highlightIndex,
                 parentIframe
@@ -1279,11 +1280,12 @@
                   label,
                   element: node,
                   parentIframe,
+                  index,
                 });
               }
             }
           } else {
-            const { label } = highlightElement(
+            const { label, index } = highlightElement(
               node,
               nodeData.highlightIndex,
               parentIframe
@@ -1293,6 +1295,7 @@
                 label,
                 element: node,
                 parentIframe,
+                index,
               });
             }
           }
@@ -1551,7 +1554,7 @@
   getEffectiveScroll = measureTime(getEffectiveScroll);
 
   const rootId = buildDomTree(document.body);
-  function repositionLabel({ label, element, parentIframe }) {
+  function repositionLabel({ label, element, parentIframe, index }) {
     // 初期化
     window._labelRects = window._labelRects || [];
     window._highlightRects = window._highlightRects || [];
@@ -1584,7 +1587,7 @@
       const labelArea = labelWidth * labelHeight;
       const areaRatio = labelArea / elementArea;
 
-      const mustPlaceOutside = areaRatio < 0.5;
+      const mustPlaceOutside = areaRatio > 0.1;
 
       const topBase = firstRect.top + iframeOffset.y;
       const leftBase = firstRect.left + iframeOffset.x;
@@ -1657,8 +1660,8 @@
           totalOverlap += getOverlapArea(candidateRect, otherRect);
         }
 
-        // ハイライト(overlays)とも重なる部分を計算
         for (const highlight of window._highlightRects) {
+          if (highlight.sourceIndex === index) continue;
           totalOverlap += getOverlapArea(candidateRect, highlight);
         }
 
