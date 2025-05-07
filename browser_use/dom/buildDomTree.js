@@ -247,7 +247,7 @@
   function highlightElement(element, index, parentIframe = null) {
     pushTiming("highlighting");
 
-    if (!element) return index;
+    if (!element) return { index };
 
     // Store overlays and the single label for updating
     const overlays = [];
@@ -274,9 +274,8 @@
       }
 
       // Get element client rects
-      const rects = element.getClientRects(); // Use getClientRects()
-
-      if (!rects || rects.length === 0) return index; // Exit if no rects
+      const rects = element.getClientRects();
+      if (!rects || rects.length === 0) return { index };
 
       // Generate a color based on the index
       const colors = [
@@ -295,12 +294,12 @@
       ];
       const colorIndex = index % colors.length;
       const baseColor = colors[colorIndex];
-      const backgroundColor = baseColor + "1A"; // 10% opacity version of the color
+      const backgroundColor = baseColor + "1A";
 
       // Get iframe offset if necessary
       let iframeOffset = { x: 0, y: 0 };
       if (parentIframe) {
-        const iframeRect = parentIframe.getBoundingClientRect(); // Keep getBoundingClientRect for iframe offset
+        const iframeRect = parentIframe.getBoundingClientRect();
         iframeOffset.x = iframeRect.left;
         iframeOffset.y = iframeRect.top;
       }
@@ -310,7 +309,7 @@
 
       // Create highlight overlays for each client rect
       for (const rect of rects) {
-        if (rect.width === 0 || rect.height === 0) continue; // Skip empty rects
+        if (rect.width === 0 || rect.height === 0) continue;
 
         const overlay = document.createElement("div");
         overlay.style.position = "fixed";
@@ -328,10 +327,17 @@
         overlay.style.height = `${rect.height}px`;
 
         fragment.appendChild(overlay);
-        overlays.push({ element: overlay, initialRect: rect }); // Store overlay and its rect
+        overlays.push({ element: overlay, initialRect: rect });
+        window._highlightRects = window._highlightRects || [];
+        window._highlightRects.push({
+          top: top,
+          left: left,
+          right: left + rect.width,
+          bottom: top + rect.height,
+        });
       }
 
-      // Create and position a single label relative to the first rect
+      // Create label (but DO NOT append yet)
       const firstRect = rects[0];
       label = document.createElement("div");
       label.className = "playwright-highlight-label";
@@ -346,8 +352,8 @@
       )}px`;
       label.textContent = index;
 
-      labelWidth = label.offsetWidth > 0 ? label.offsetWidth : labelWidth; // Update actual width if possible
-      labelHeight = label.offsetHeight > 0 ? label.offsetHeight : labelHeight; // Update actual height if possible
+      labelWidth = label.offsetWidth > 0 ? label.offsetWidth : labelWidth;
+      labelHeight = label.offsetHeight > 0 ? label.offsetHeight : labelHeight;
 
       const firstRectTop = firstRect.top + iframeOffset.y;
       const firstRectLeft = firstRect.left + iframeOffset.x;
@@ -355,7 +361,6 @@
       let labelTop = firstRectTop + 2;
       let labelLeft = firstRectLeft + firstRect.width - labelWidth - 2;
 
-      // Adjust label position if first rect is too small
       if (
         firstRect.width < labelWidth + 4 ||
         firstRect.height < labelHeight + 4
@@ -365,7 +370,6 @@
         if (labelLeft < iframeOffset.x) labelLeft = firstRectLeft; // Prevent going off-left
       }
 
-      // Ensure label stays within viewport bounds slightly better
       labelTop = Math.max(
         0,
         Math.min(labelTop, window.innerHeight - labelHeight)
@@ -378,23 +382,22 @@
       label.style.top = `${labelTop}px`;
       label.style.left = `${labelLeft}px`;
 
-      fragment.appendChild(label);
+      // Do NOT append label here!
 
       // Update positions on scroll/resize
       const updatePositions = () => {
-        const newRects = element.getClientRects(); // Get fresh rects
+        const newRects = element.getClientRects();
         let newIframeOffset = { x: 0, y: 0 };
 
         if (parentIframe) {
-          const iframeRect = parentIframe.getBoundingClientRect(); // Keep getBoundingClientRect for iframe
+          const iframeRect = parentIframe.getBoundingClientRect();
           newIframeOffset.x = iframeRect.left;
           newIframeOffset.y = iframeRect.top;
         }
 
-        // Update each overlay
+        // Update overlays
         overlays.forEach((overlayData, i) => {
           if (i < newRects.length) {
-            // Check if rect still exists
             const newRect = newRects[i];
             const newTop = newRect.top + newIframeOffset.y;
             const newLeft = newRect.left + newIframeOffset.x;
@@ -406,19 +409,11 @@
             overlayData.element.style.display =
               newRect.width === 0 || newRect.height === 0 ? "none" : "block";
           } else {
-            // If fewer rects now, hide extra overlays
             overlayData.element.style.display = "none";
           }
         });
 
-        // If there are fewer new rects than overlays, hide the extras
-        if (newRects.length < overlays.length) {
-          for (let i = newRects.length; i < overlays.length; i++) {
-            overlays[i].element.style.display = "none";
-          }
-        }
-
-        // Update label position based on the first new rect
+        // Update label position
         if (label && newRects.length > 0) {
           const firstNewRect = newRects[0];
           const firstNewRectTop = firstNewRect.top + newIframeOffset.y;
@@ -438,7 +433,6 @@
               newLabelLeft = firstNewRectLeft;
           }
 
-          // Ensure label stays within viewport bounds
           newLabelTop = Math.max(
             0,
             Math.min(newLabelTop, window.innerHeight - labelHeight)
@@ -452,7 +446,6 @@
           label.style.left = `${newLabelLeft}px`;
           label.style.display = "block";
         } else if (label) {
-          // Hide label if element has no rects anymore
           label.style.display = "none";
         }
       };
@@ -467,28 +460,23 @@
         };
       };
 
-      const throttledUpdatePositions = throttleFunction(updatePositions, 16); // ~60fps
+      const throttledUpdatePositions = throttleFunction(updatePositions, 16);
       window.addEventListener("scroll", throttledUpdatePositions, true);
       window.addEventListener("resize", throttledUpdatePositions);
 
-      // Add cleanup function
       cleanupFn = () => {
         window.removeEventListener("scroll", throttledUpdatePositions, true);
         window.removeEventListener("resize", throttledUpdatePositions);
-        // Remove overlay elements if needed
         overlays.forEach((overlay) => overlay.element.remove());
         if (label) label.remove();
       };
 
-      // Then add fragment to container in one operation
       container.appendChild(fragment);
 
-      return index + 1;
+      return { index: index + 1, label }; // label を返す
     } finally {
       popTiming("highlighting");
-      // Store cleanup function for later use
       if (cleanupFn) {
-        // Keep a reference to cleanup functions in a global array
         (window._highlightCleanupFunctions =
           window._highlightCleanupFunctions || []).push(cleanupFn);
       }
@@ -1281,10 +1269,32 @@
         if (doHighlightElements) {
           if (focusHighlightIndex >= 0) {
             if (focusHighlightIndex === nodeData.highlightIndex) {
-              highlightElement(node, nodeData.highlightIndex, parentIframe);
+              const { label } = highlightElement(
+                node,
+                nodeData.highlightIndex,
+                parentIframe
+              );
+              if (label) {
+                (window._pendingLabels = window._pendingLabels || []).push({
+                  label,
+                  element: node,
+                  parentIframe,
+                });
+              }
             }
           } else {
-            highlightElement(node, nodeData.highlightIndex, parentIframe);
+            const { label } = highlightElement(
+              node,
+              nodeData.highlightIndex,
+              parentIframe
+            );
+            if (label) {
+              (window._pendingLabels = window._pendingLabels || []).push({
+                label,
+                element: node,
+                parentIframe,
+              });
+            }
           }
           return true; // Successfully highlighted
         }
@@ -1541,7 +1551,139 @@
   getEffectiveScroll = measureTime(getEffectiveScroll);
 
   const rootId = buildDomTree(document.body);
+  function repositionLabel({ label, element, parentIframe }) {
+    // 初期化
+    window._labelRects = window._labelRects || [];
+    window._highlightRects = window._highlightRects || [];
 
+    const rects = element.getClientRects();
+    if (!rects || rects.length === 0) {
+      label.style.display = "none";
+      return;
+    }
+
+    const firstRect = rects[0];
+    let iframeOffset = { x: 0, y: 0 };
+    if (parentIframe) {
+      const iframeRect = parentIframe.getBoundingClientRect();
+      iframeOffset.x = iframeRect.left;
+      iframeOffset.y = iframeRect.top;
+    }
+
+    const container = document.getElementById("playwright-highlight-container");
+    if (container && !container.contains(label)) {
+      container.appendChild(label);
+    }
+
+    // 配置は描画後に行う
+    requestAnimationFrame(() => {
+      const labelWidth = label.offsetWidth;
+      const labelHeight = label.offsetHeight;
+
+      const elementArea = firstRect.width * firstRect.height;
+      const labelArea = labelWidth * labelHeight;
+      const areaRatio = labelArea / elementArea;
+
+      const mustPlaceOutside = areaRatio < 0.5;
+
+      const topBase = firstRect.top + iframeOffset.y;
+      const leftBase = firstRect.left + iframeOffset.x;
+
+      const insidePositions = [
+        { dx: 2, dy: 2 },
+        { dx: firstRect.width - labelWidth - 2, dy: 2 },
+        { dx: 2, dy: firstRect.height - labelHeight - 2 },
+        {
+          dx: firstRect.width - labelWidth - 2,
+          dy: firstRect.height - labelHeight - 2,
+        },
+        {
+          dx: (firstRect.width - labelWidth) / 2,
+          dy: (firstRect.height - labelHeight) / 2,
+        },
+      ];
+
+      const outsidePositions = [
+        { dx: 0, dy: -labelHeight - 4 },
+        { dx: firstRect.width - labelWidth, dy: -labelHeight - 4 },
+        { dx: (firstRect.width - labelWidth) / 2, dy: -labelHeight - 4 },
+        { dx: firstRect.width + 4, dy: 0 },
+        { dx: -labelWidth - 4, dy: 0 },
+        { dx: (firstRect.width - labelWidth) / 2, dy: firstRect.height + 4 },
+        { dx: 0, dy: firstRect.height + 4 },
+        { dx: firstRect.width - labelWidth, dy: firstRect.height + 4 },
+      ];
+
+      const candidatePositions = mustPlaceOutside
+        ? outsidePositions
+        : [...insidePositions, ...outsidePositions];
+
+      // 重なり面積を計算する関数
+      function getOverlapArea(r1, r2) {
+        const x_overlap = Math.max(
+          0,
+          Math.min(r1.right, r2.right) - Math.max(r1.left, r2.left)
+        );
+        const y_overlap = Math.max(
+          0,
+          Math.min(r1.bottom, r2.bottom) - Math.max(r1.top, r2.top)
+        );
+        return x_overlap * y_overlap;
+      }
+
+      // 候補を評価して、重なりが一番少ないものを選ぶ
+      let bestPos = null;
+      let minOverlapArea = Infinity;
+
+      for (const pos of candidatePositions) {
+        let top = topBase + pos.dy;
+        let left = leftBase + pos.dx;
+
+        // 画面内に収める
+        top = Math.max(0, Math.min(top, window.innerHeight - labelHeight));
+        left = Math.max(0, Math.min(left, window.innerWidth - labelWidth));
+
+        const candidateRect = {
+          top: top,
+          left: left,
+          right: left + labelWidth,
+          bottom: top + labelHeight,
+        };
+
+        let totalOverlap = 0;
+
+        // 他のラベルと重なる部分を計算
+        for (const otherRect of window._labelRects) {
+          totalOverlap += getOverlapArea(candidateRect, otherRect);
+        }
+
+        // ハイライト(overlays)とも重なる部分を計算
+        for (const highlight of window._highlightRects) {
+          totalOverlap += getOverlapArea(candidateRect, highlight);
+        }
+
+        if (totalOverlap < minOverlapArea) {
+          minOverlapArea = totalOverlap;
+          bestPos = { top, left, rect: candidateRect };
+        }
+      }
+
+      // 最適な位置に配置
+      if (bestPos) {
+        label.style.top = `${bestPos.top}px`;
+        label.style.left = `${bestPos.left}px`;
+        label.style.display = "block";
+
+        // 使用済みとして追加
+        window._labelRects.push(bestPos.rect);
+      }
+    });
+  }
+
+  if (window._pendingLabels && window._pendingLabels.length > 0) {
+    window._pendingLabels.forEach(repositionLabel);
+    window._pendingLabels = []; // 処理後はクリアしておくと安全
+  }
   // Clear the cache before starting
   DOM_CACHE.clearCache();
 
