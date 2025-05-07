@@ -1643,8 +1643,8 @@
         let left = leftBase + pos.dx;
 
         // 画面内に収める
-        top = Math.max(0, Math.min(top, window.innerHeight - labelHeight));
-        left = Math.max(0, Math.min(left, window.innerWidth - labelWidth));
+        // top = Math.max(0, Math.min(top, window.innerHeight - labelHeight));
+        // left = Math.max(0, Math.min(left, window.innerWidth - labelWidth));
 
         const candidateRect = {
           top: top,
@@ -1652,6 +1652,24 @@
           right: left + labelWidth,
           bottom: top + labelHeight,
         };
+        if (mustPlaceOutside) {
+          const isOutOfScreen =
+            candidateRect.left < 0 ||
+            candidateRect.top < 0 ||
+            candidateRect.right > window.innerWidth ||
+            candidateRect.bottom > window.innerHeight;
+          if (isOutOfScreen) {
+            continue;
+          }
+        } else {
+          // 中もOKなら押し込む
+          top = Math.max(0, Math.min(top, window.innerHeight - labelHeight));
+          left = Math.max(0, Math.min(left, window.innerWidth - labelWidth));
+          candidateRect.top = top;
+          candidateRect.left = left;
+          candidateRect.right = left + labelWidth;
+          candidateRect.bottom = top + labelHeight;
+        }
 
         let totalOverlap = 0;
 
