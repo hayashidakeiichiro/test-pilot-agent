@@ -1596,7 +1596,6 @@
       const leftBase = firstRect.left + iframeOffset.x;
 
       const insidePositions = [
-        { dx: 2, dy: 2 },
         { dx: firstRect.width - labelWidth - 2, dy: 2 },
         { dx: 2, dy: firstRect.height - labelHeight - 2 },
         {
@@ -1607,6 +1606,7 @@
           dx: (firstRect.width - labelWidth) / 2,
           dy: (firstRect.height - labelHeight) / 2,
         },
+        { dx: 2, dy: 2 },
       ];
 
       const outsidePositions = [
