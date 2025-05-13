@@ -64,6 +64,10 @@ class AgentSettings(BaseModel):
 		'value',
 		'alt',
 		'aria-expanded',
+		# test-pilot-img-attribute
+		'src',
+		'class',
+		# test-pilot
 	]
 	max_actions_per_step: int = 10
 

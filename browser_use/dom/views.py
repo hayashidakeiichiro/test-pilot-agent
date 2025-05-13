@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Optional
 
 from browser_use.dom.history_tree_processor.view import CoordinateSet, HashedDomElement, ViewportInfo
 from browser_use.utils import time_execution_sync
+from urllib.parse import urlparse, unquote
 
 # Avoid circular import issues
 if TYPE_CHECKING:
@@ -142,9 +143,43 @@ class DOMElementNode(DOMBaseNode):
 
 			if isinstance(node, DOMTextNode):
 				text_parts.append(node.text)
+			# test-pilot
+			#　画像を認識するのが難しいのでattributeを入れる
+			# test-pilot-img-attributeで検索すると属性を追加できる
 			elif isinstance(node, DOMElementNode):
+				def summarize_image_url_segments(src_text: str) -> str:
+					if not src_text:
+						return ""
+
+					# URLをデコードしてパス部分を取得
+					parsed = urlparse(unquote(src_text))
+					segments = parsed.path.strip("/").split("/")
+
+					# 10文字以下のセグメントだけ残す
+					filtered = [seg for seg in segments if len(seg) <= 10]
+
+					# 空でなければ整形
+					if filtered:
+						return '/'.join(filtered)
+					else:
+						return ""
+				# If the element is an <img> tag and has no text, include its 'alt' or 'src' attributes
 				for child in node.children:
+					if isinstance(child, DOMElementNode) and child.tag_name == 'img':
+						alt_text = child.attributes.get('alt', '').strip()
+						src_text = child.attributes.get('src', '').strip()
+						class_text = child.attributes.get('class', '').strip()
+						title_text = child.attributes.get('title', '').strip()
+						if alt_text:
+							text_parts.append(f"[Image: {alt_text}]")
+						if src_text:
+							text_parts.append(f"[Image URL: {summarize_image_url_segments(src_text)}]")
+						if class_text:
+							text_parts.append(f"[Image class: {class_text}]")
+						if title_text:
+							text_parts.append(f"[Image title: {title_text}]")
 					collect_text(child, current_depth + 1)
+			# test-pilot		
 
 		collect_text(self, 0)
 		return '\n'.join(text_parts).strip()

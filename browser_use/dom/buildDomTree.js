@@ -1443,6 +1443,17 @@
         nodeData.attributes[name] = node.getAttribute(name);
       }
     }
+    // test-pilot
+    // 画像の場合、全ての属性を取得
+    if (
+      node.tagName.toLowerCase() === "img"
+    ) {
+      const attributeNames = node.getAttributeNames?.() || [];
+      for (const name of attributeNames) {
+        nodeData.attributes[name] = node.getAttribute(name);
+      }
+    }
+    // test-pilot
 
     let nodeWasHighlighted = false;
     // Perform visibility, interactivity, and highlighting checks

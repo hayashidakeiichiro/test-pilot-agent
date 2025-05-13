@@ -104,10 +104,10 @@ class LoggingCallbackHandler(BaseCallbackHandler):
 
 async def main_task():
 
-    url = "https://news.yahoo.co.jp/"
+    url = "https://zenn.dev/"
     # url = "https://zenn.dev"
     task_prompt = f"""
-    capture a screenshot.
+    techセクションの最初の記事のユーザーアイコンをクリックして
     """
     clear_logs()
     browser = Browser(config=BrowserConfig(headless=True))
@@ -120,7 +120,7 @@ async def main_task():
         initial_actions=[{'open_tab': {'url': url}}]
     )
 
-    result = await agent.run(max_steps=1)
+    result = await agent.run(max_steps=2)
 
 
 if __name__ == "__main__":
