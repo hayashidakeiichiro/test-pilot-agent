@@ -8,9 +8,9 @@ from dotenv import load_dotenv
 from PIL import Image
 from langchain.callbacks.base import BaseCallbackHandler
 from langchain_openai import ChatOpenAI
-
-from browser_use import Agent
-from browser_use.browser.browser import Browser, BrowserConfig
+from browser_use import ActionResult, Agent, Browser, BrowserConfig, Controller
+from examples.custom_functions.find_section_by_context import attach_find_section_by_context_block
+from examples.custom_functions.find_target import attach_find_target
 
 load_dotenv()
 # スクショ保存ディレクトリ
@@ -102,25 +102,39 @@ class LoggingCallbackHandler(BaseCallbackHandler):
             log_file.write(json.dumps(generations_serializable, indent=4, ensure_ascii=False) + "\n\n")
 
 
+from browser_use.browser.context import BrowserContext, BrowserContextConfig
 async def main_task():
 
-    url = "https://zenn.dev/"
+    url = "https://www.rakuten.co.jp/"
     # url = "https://zenn.dev"
     task_prompt = f"""
-    techセクションの最初の記事のユーザーアイコンをクリックして
+    以下のjsonをもとに、find_targetのactionを実行してください
+    [{{
+        "action": "click_element",
+        "target": "マーベル",
+        "context_block": "ショップブランド",
+        "header_hint": null
+    }}]
     """
     clear_logs()
+    controller = Controller()
+    attach_find_target(controller)
     browser = Browser(config=BrowserConfig(headless=True))
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.8, callbacks=[LoggingCallbackHandler()])
+    browser_context = BrowserContext(config=BrowserContextConfig(user_agent='foobarfoo'), browser=browser)
+
+    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.1, callbacks=[LoggingCallbackHandler()])
 
     agent = Agent(
         task=task_prompt,
         llm=llm,
-        browser=browser,
+        controller=controller,
+        browser_context=browser_context,
         initial_actions=[{'open_tab': {'url': url}}]
     )
 
     result = await agent.run(max_steps=2)
+
+
 
 
 if __name__ == "__main__":
