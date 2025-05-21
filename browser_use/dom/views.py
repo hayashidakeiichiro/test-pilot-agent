@@ -130,7 +130,7 @@ class DOMElementNode(DOMBaseNode):
 
 		return HistoryTreeProcessor._hash_dom_element(self)
 
-	def get_all_text_till_next_clickable_element(self, max_depth: int = -1) -> str:
+	def get_all_text_till_next_clickable_element(self, max_depth: int = -1, include_attr_for_img: bool = True) -> str:
 		text_parts = []
 
 		def collect_text(node: DOMBaseNode, current_depth: int) -> None:
@@ -165,7 +165,7 @@ class DOMElementNode(DOMBaseNode):
 						return ""
 				# If the element is an <img> tag and has no text, include its 'alt' or 'src' attributes
 				for child in node.children:
-					if isinstance(child, DOMElementNode) and child.tag_name == 'img':
+					if isinstance(child, DOMElementNode) and child.tag_name == 'img' and include_attr_for_img:
 						alt_text = child.attributes.get('alt', '').strip()
 						src_text = child.attributes.get('src', '').strip()
 						class_text = child.attributes.get('class', '').strip()
@@ -267,6 +267,155 @@ class DOMElementNode(DOMBaseNode):
 
 		process_node(self, 0)
 		return '\n'.join(formatted_text)
+
+	# test-pilot
+	def clickable_elements_to_string_compact(
+		self,
+		include_attributes: list[str] | None = None,
+		max_chars: int = 4000
+	) -> str:
+		"""Convert the processed DOM content to compact HTML-like string for LLM input, capped by max_chars."""
+		formatted_lines = []
+
+		def is_structural_tag(tag: str) -> bool:
+			return tag in {"section", "nav", "header", "footer", "main", "aside", "article", "h1", "h2", "h3", "ul", "ol", "li", "a"}
+
+		def compact_text(text: str, tag: str) -> str:
+			stripped = text.strip()
+			if is_structural_tag(tag):
+				return stripped
+			return stripped[:10] + "…" if len(stripped) > 10 else stripped
+		def calculate_priority_score(tag: str, attrs: dict) -> int:
+			"""
+			Calculate importance score of a DOM element based on:
+			- tag name
+			- attributes like class/id/role
+			- position (top)
+			- size (height)
+			"""
+			score = 0
+
+			# --- タグによるスコア ---
+			if tag in {"main", "article", "section", "header"}:
+				score += 4
+			elif tag in {"h1", "h2", "h3", "h4", "h5", "h6"}:
+				score += 3
+			elif tag in {"div", "span", "p" , "a", "button", "input", "select", "textarea"}:
+				score += 1
+			elif tag in {"nav", "aside", "footer", "script", "style"}:
+				score -= 1  # 補助的なものは減点
+
+			# --- 属性（id/class） ---
+			id_class_concat = (attrs.get("id", "") + " " + attrs.get("class", "")).lower()
+			if any(keyword in id_class_concat for keyword in ["main", "content", "article", "title", "ttl"]):
+				score += 2
+			if any(keyword in id_class_concat for keyword in ["ad", "footer", "hidden"]):
+				score -= 3
+
+			# --- role属性 ---
+			if attrs.get("role", "").lower() == "main":
+				score += 3
+			return max(score, 0)  # 最低スコアは 0
+
+		def process_node(node: DOMBaseNode, depth: int) -> None:
+			next_depth = int(depth)
+			depth_str = depth * '\t'
+
+			if isinstance(node, DOMElementNode):
+				if node.highlight_index is not None:
+					next_depth += 1
+					full_text = node.get_all_text_till_next_clickable_element()
+					text = compact_text(full_text, node.tag_name)
+
+					attributes_html_str = ''
+					if include_attributes:
+						attributes_to_include = {
+							key: str(value)
+							for key, value in node.attributes.items()
+							if key in include_attributes
+						}
+						# Easy LLM optimizations
+						# if tag == role attribute, don't include it
+						if node.tag_name == attributes_to_include.get('role'):
+							del attributes_to_include['role']
+
+						# if aria-label == text of the node, don't include it
+						if (
+							attributes_to_include.get('aria-label')
+							and attributes_to_include.get('aria-label', '').strip() == text.strip()
+						):
+							del attributes_to_include['aria-label']
+
+						# if placeholder == text of the node, don't include it
+						if (
+							attributes_to_include.get('placeholder')
+							and attributes_to_include.get('placeholder', '').strip() == text.strip()
+						):
+							del attributes_to_include['placeholder']
+
+						if attributes_to_include:
+							attributes_html_str = ' '.join(f"{key}='{value}'" for key, value in attributes_to_include.items())
+
+					highlight_indicator = f'*[{node.highlight_index}]*' if node.is_new else f'[{node.highlight_index}]'
+					line = f'{depth_str}{highlight_indicator}<{node.tag_name}'
+					if attributes_html_str:
+						line += f' {attributes_html_str}'
+					if text:
+						if not attributes_html_str:
+							line += ' '
+						line += f'>{text}'
+					elif not attributes_html_str:
+						line += ' '
+					line += ' />'
+
+					formatted_lines.append({
+						"line": line,
+						"priority": calculate_priority_score(node.tag_name, node.attributes),
+					})
+
+				for child in node.children:
+					process_node(child, next_depth)
+
+			elif isinstance(node, DOMTextNode):
+				if (
+					not node.has_parent_with_highlight_index()
+					and node.parent
+					and node.parent.is_visible
+					and node.parent.is_top_element
+				):
+					compact = compact_text(node.text, node.parent.tag_name)
+					if compact:
+						formatted_lines.append({
+							"line": f'{depth_str}{compact}',
+							"priority": calculate_priority_score(node.parent.tag_name, node.parent.attributes),
+						})
+
+		process_node(self, 0)
+		print(f"formatted_lines: {formatted_lines}")
+
+		# 優先度スコアの低い順に行インデックスを取得
+		deletion_order = sorted(
+			range(len(formatted_lines)),
+			key=lambda i: (formatted_lines[i]["priority"], -i)  # ← indexを逆順にして後ろを先に消す
+		)
+
+		# 全体を一度構築しつつ、オーバーしたら priority 低い行から削除
+		total_chars = sum(len(line["line"]) + 1 for line in formatted_lines)
+		if total_chars <= max_chars:
+			return '\n'.join(line["line"] for line in formatted_lines)
+
+		# 超えているのでカットする
+		removed = set()
+		current_length = total_chars
+		for i in deletion_order:
+			if current_length <= max_chars:
+				break
+			removed.add(i)
+			current_length -= len(formatted_lines[i]["line"]) + 1
+
+		return '\n'.join(
+			line["line"] for idx, line in enumerate(formatted_lines) if idx not in removed
+		)
 
 	def get_file_upload_element(self, check_siblings: bool = True) -> Optional['DOMElementNode']:
 		# Check if current element is a file input

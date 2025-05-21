@@ -1434,7 +1434,7 @@
 
     // Get attributes for interactive elements or potential text containers
     if (
-      isInteractiveCandidate(node) ||
+      isInteractiveElement(node) ||
       node.tagName.toLowerCase() === "iframe" ||
       node.tagName.toLowerCase() === "body"
     ) {
