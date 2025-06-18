@@ -960,6 +960,226 @@ class Agent(Generic[Context]):
 
 				create_history_gif(task=self.task, history=self.state.history, output_path=output_path)
 
+	# test-pilot
+	@time_execution_async('--step (agent)')
+	async def step_with_action(self, action: list[ActionModel], step_info: AgentStepInfo | None = None) -> None:
+		logger.info(f'📍 Step {self.state.n_steps}')
+		state = None
+		result: list[ActionResult] = []
+		step_start_time = time.time()
+		tokens = 0
+
+		try:
+			state = await self.browser_context.get_state(cache_clickable_elements_hashes=True)
+			current_page = await self.browser_context.get_current_page()
+
+			if self.enable_memory and self.memory and self.state.n_steps % self.memory.config.memory_interval == 0:
+				self.memory.create_procedural_memory(self.state.n_steps)
+
+			await self._raise_if_stopped_or_paused()
+
+			await self._update_action_models_for_page(current_page)
+
+			page_filtered_actions = self.controller.registry.get_prompt_description(current_page)
+			if page_filtered_actions:
+				msg = f'For this page, these additional actions are available:\n{page_filtered_actions}'
+				self._message_manager._add_message_with_tokens(HumanMessage(content=msg))
+
+			self._message_manager.add_state_message(state, self.state.last_result, step_info, self.settings.use_vision)
+
+			if step_info and step_info.is_last_step():
+				final_msg = (
+					'Now comes your last step. Use only the "done" action now. '
+					'Set success appropriately based on task completion.'
+				)
+				self._message_manager._add_message_with_tokens(HumanMessage(content=final_msg))
+				self.AgentOutput = self.DoneAgentOutput
+
+			self.state.n_steps += 1
+
+			if self.register_new_step_callback:
+				if inspect.iscoroutinefunction(self.register_new_step_callback):
+					await self.register_new_step_callback(state, action, self.state.n_steps)
+				else:
+					self.register_new_step_callback(state, action, self.state.n_steps)
+
+			self._message_manager._remove_last_state_message()
+			# self._message_manager.add_model_output(AgentModelOutput(action=action))
+
+			result = await self.multi_act(action)
+			self.state.last_result = result
+
+			if result and result[-1].is_done:
+				logger.info(f'📄 Result: {result[-1].extracted_content}')
+
+			self.state.consecutive_failures = 0
+
+		except InterruptedError:
+			self.state.last_result = [ActionResult(error='The agent was paused mid-step.', include_in_memory=False)]
+			return
+		except asyncio.CancelledError:
+			self.state.last_result = [ActionResult(error='The agent was paused with Ctrl+C', include_in_memory=False)]
+			raise InterruptedError('Step cancelled by user')
+		except Exception as e:
+			result = await self._handle_step_error(e)
+			self.state.last_result = result
+
+		finally:
+			step_end_time = time.time()
+			self.telemetry.capture(AgentStepTelemetryEvent(
+				agent_id=self.state.agent_id,
+				step=self.state.n_steps,
+				actions=[a.model_dump(exclude_unset=True) for a in action],
+				consecutive_failures=self.state.consecutive_failures,
+				step_error=[r.error for r in result if r.error] if result else ['No result'],
+			))
+
+			if state:
+				metadata = StepMetadata(
+					step_number=self.state.n_steps,
+					step_start_time=step_start_time,
+					step_end_time=step_end_time,
+					input_tokens=tokens,
+				)
+				# self._make_history_item(AgentModelOutput(action=action), state, result, metadata)
+	#test-pilot
+	@time_execution_async('--run (agent)')
+	async def run_actions(
+		self, max_steps: int = 100, actions: list[ActionModel] = [], on_step_start: AgentHookFunc | None = None, on_step_end: AgentHookFunc | None = None
+	) -> AgentHistoryList:
+		"""Execute the task with maximum number of steps"""
+
+		loop = asyncio.get_event_loop()
+
+		# Set up the Ctrl+C signal handler with callbacks specific to this agent
+		from browser_use.utils import SignalHandler
+
+		signal_handler = SignalHandler(
+			loop=loop,
+			pause_callback=self.pause,
+			resume_callback=self.resume,
+			custom_exit_callback=None,  # No special cleanup needed on forced exit
+			exit_on_second_int=True,
+		)
+		signal_handler.register()
+
+		try:
+			self._log_agent_run()
+
+			# Execute initial actions if provided
+			if self.initial_actions:
+				result = await self.multi_act(self.initial_actions, check_for_new_elements=False)
+				self.state.last_result = result
+
+			for step, action in enumerate(self._convert_initial_actions(actions)):
+				# Check if waiting for user input after Ctrl+C
+				if self.state.paused:
+					signal_handler.wait_for_resume()
+					signal_handler.reset()
+
+				# Check if we should stop due to too many failures
+				if self.state.consecutive_failures >= self.settings.max_failures:
+					logger.error(f'❌ Stopping due to {self.settings.max_failures} consecutive failures')
+					break
+
+				# Check control flags before each step
+				if self.state.stopped:
+					logger.info('Agent stopped')
+					break
+
+				while self.state.paused:
+					await asyncio.sleep(0.2)  # Small delay to prevent CPU spinning
+					if self.state.stopped:  # Allow stopping while paused
+						break
+
+				if on_step_start is not None:
+					await on_step_start(self)
+
+				result = await self.step_with_action([action], step_info=AgentStepInfo(step_number=step, max_steps=max_steps))
+				self.state.last_result = result
+
+
+				if on_step_end is not None:
+					await on_step_end(self)
+
+				if self.state.history.is_done():
+					if self.settings.validate_output and step < max_steps - 1:
+						if not await self._validate_output():
+							continue
+
+					await self.log_completion()
+					break
+			else:
+				error_message = 'Completed all actions, but did not reach done state'
+
+				self.state.history.history.append(
+					AgentHistory(
+						model_output=None,
+						result=[ActionResult(error=error_message, include_in_memory=True)],
+						state=BrowserStateHistory(
+							url='',
+							title='',
+							tabs=[],
+							interacted_element=[],
+							screenshot=None,
+						),
+						metadata=None,
+					)
+				)
+
+				logger.info(f'{error_message}')
+
+			return self.state.history
+
+		except KeyboardInterrupt:
+			# Already handled by our signal handler, but catch any direct KeyboardInterrupt as well
+			logger.info('Got KeyboardInterrupt during execution, returning current history')
+			return self.state.history
+
+		finally:
+			# Unregister signal handlers before cleanup
+			signal_handler.unregister()
+
+			self.telemetry.capture(
+				AgentEndTelemetryEvent(
+					agent_id=self.state.agent_id,
+					is_done=self.state.history.is_done(),
+					success=self.state.history.is_successful(),
+					steps=self.state.n_steps,
+					max_steps_reached=self.state.n_steps >= max_steps,
+					errors=self.state.history.errors(),
+					total_input_tokens=self.state.history.total_input_tokens(),
+					total_duration_seconds=self.state.history.total_duration_seconds(),
+				)
+			)
+
+			if self.settings.save_playwright_script_path:
+				logger.info(
+					f'Agent run finished. Attempting to save Playwright script to: {self.settings.save_playwright_script_path}'
+				)
+				try:
+					# Extract sensitive data keys if sensitive_data is provided
+					keys = list(self.sensitive_data.keys()) if self.sensitive_data else None
+					# Pass browser and context config to the saving method
+					self.state.history.save_as_playwright_script(
+						self.settings.save_playwright_script_path,
+						sensitive_data_keys=keys,
+						browser_config=self.browser.config,
+						context_config=self.browser_context.config,
+					)
+				except Exception as script_gen_err:
+					# Log any error during script generation/saving
+					logger.error(f'Failed to save Playwright script: {script_gen_err}', exc_info=True)
+
+			await self.close()
+
+			if self.settings.generate_gif:
+				output_path: str = 'agent_history.gif'
+				if isinstance(self.settings.generate_gif, str):
+					output_path = self.settings.generate_gif
+
+				create_history_gif(task=self.task, history=self.state.history, output_path=output_path)
+
 	# @observe(name='controller.multi_act')
 	@time_execution_async('--multi-act (agent)')
 	async def multi_act(

@@ -24,7 +24,9 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.messages.base import BaseMessage, BaseMessageChunk
 from itertools import islice
 from PIL import Image
+from examples.custom_functions.generate_icon_list_image import generate_selector_thumbnail_grid_base64
 from examples.custom_functions.generate_icon_list_image import generate_selector_thumbnail_grid_base64, extract_none_text_selector_map
+
 
 logger = logging.getLogger(__name__)
 
@@ -51,34 +53,13 @@ def hierarchical_compare(a, b):
 
 def find_all_heading_nodes(node: DOMElementNode) -> list[DOMElementNode]:
     headings = []
-    if isinstance(node, DOMElementNode) and is_title_node(node) and node.is_visible:
+    if isinstance(node, DOMElementNode) and node.is_visible:
         headings.append(node)
     # if isinstance(node, DOMElementNode) and node.is_visible:
     for child in getattr(node, "children", []):
         if isinstance(child, DOMElementNode):
             headings.extend(find_all_heading_nodes(child))
     return headings
-TITLE_TAGS_ALWAYS = {"h1", "h2", "h3", "h4", "h5", "h6", "header"}
-TITLE_KEYWORDS = [
-    "title", "heading", "head", "header",
-    "section-title", "block-title", "card-title",
-    "product-title", "article-title", "entry-title", "page-title",
-    "ranking-title", "category-title",
-    # 略語
-    "ttl", "hd", "hdr", "cap", "caption",
-    "headline", "lbl", "label", "txt-title", "mod-ttl", "unit-ttl"
-]
-def looks_like_title(node: DOMElementNode) -> bool:
-    cls = node.attributes.get("class", "").lower()
-    role = node.attributes.get("role", "").lower()
-    return (
-        any(keyword in cls for keyword in TITLE_KEYWORDS) or
-        role == "heading"
-    )
-def is_title_node(node: DOMElementNode) -> bool:
-    # tag = node.tag_name.lower()
-    return True
-
 
 include_attributes: list[str] = [
 		'title',
@@ -230,70 +211,91 @@ def build_select_candidates_prompt(target: str, context_block: str, hint: str, c
                 for i, (score, node) in enumerate(candidates)
             ])
         ) 
-def build_select_candidates_by_hint(hint: str, selector_map) -> str:
-    def format_selector_map(selector_map: dict[int, DOMElementNode]) -> str:
-        lines = []
-        for idx, node in sorted(selector_map.items()):
-            tag = node.tag_name or "unknown"
-            text = node.get_all_text_till_next_clickable_element()
-            lines.append(f"[{idx}] <{tag}> {text}")
-        return "\n".join(lines)
+def build_select_candidates_by_hint(hint: str, candidates_str: str) -> str:
+    # prompt = '''
+    #     You are given a list of clickable candidate elements extracted from a web page. Each element includes the following metadata:
+    #     - `index`: A numeric identifier used to reference the element
+    #     - `text`: The visible label text (if any)
+    #     - `tag`: The HTML tag (e.g., a, button, div)
+    #     - `attributes`: Selected HTML attributes (e.g., class, role, aria-label)
+
+    #     Your goal is to identify the **most relevant element to click** based on the user’s natural-language hint. The hint may describe visual position (e.g., "top-right arrow"), purpose (e.g., "next button"), or structure (e.g., "first item in slider").
+
+    #     ---
+
+    #     ## User Hint:
+    #     "{hint}"
+
+    #     ---
+
+    #     ## Candidate Elements:
+    #     {candidates}
+
+    #     ---
+
+    #     ## Instructions:
+
+    #     1. Read the hint carefully and interpret the user's intention as precisely as possible.
+    #     2. Select **exactly one** element that matches the hint clearly and unambiguously.
+    #     3. ⚠️ If **no element clearly and confidently matches the user's hint**, return `null`. 
+    #     - This includes cases where the correct element may be **off-screen or not yet loaded**.
+    #     - Do **not** try to guess or loosely match just because something is visible.
+    #     4. It is completely acceptable—and often correct—to return `null` when:
+    #     - All visible elements are ambiguous or weakly related.
+    #     - The user's hint refers to something that might be off-screen.
+    #     5. Your job is not to force a match but to be precise and cautious. If you make an incorrect selection, the user will be misled.
+
+    #     ---
+
+    #     Respond in this exact JSON format:
+
+    #     {{
+    #     "selected_index": <index of the selected element> | null,
+    #     "reason": "<brief explanation of why this element was selected, or why nothing could be confidently selected>"
+    #     }}
+
+    #     ＊Respond with a **pure JSON object only**, without any markdown formatting such as ```json or ``` blocks. Do not add any explanations, comments, or additional text—only return the JSON itself.
+    #     '''
     prompt = '''
-        You are given a list of clickable candidate elements extracted from a web page. Each element includes the following metadata:
-        - `index`: A numeric identifier used to reference the element
-        - `tag`: The HTML tag (e.g., a, button, div)
-        - `text`: The visible label text (if any)
+    You are shown a screenshot of a web page and a user's instruction.
 
-        Your goal is to identify the **most relevant element to click** based on the user’s natural-language hint. The hint may describe visual position (e.g., "top-right arrow"), purpose (e.g., "next button"), or structure (e.g., "first item in slider").
-        
-        You are also provided with a composite image containing visual thumbnails of interactive elements extracted from the web page.
+    Your task is to determine whether the element the user is looking for is **visually present in the screenshot**.
 
-        Each visual element in the image:
-        - Is a cropped screenshot of a clickable element
-        - Is displayed in a grid layout
-        - Has its numeric index clearly shown in the **bottom-right corner**
-        - Matches the same index used in the metadata below
+    ---
 
-        Use this image to visually interpret the appearance of elements (e.g., arrows, icons, buttons) alongside the metadata.
+    ## User Hint:
+    "{hint}"
 
-        ---
+    ## Screenshot:
+    (See image)
 
-        ## User Hint:
-        "{hint}"
+    ---
 
-        ---
+    ### Instructions:
 
-        ## Candidate Elements:
-        {candidates}
+    1. Carefully analyze the screenshot.
+    2. Try to find any visual element or section that appears to match the user's hint.
+    3. ⚠️ If you are **not confident** that the element is present in the image, respond "not_found".
+    4. If you see a clearly matching element, respond "found".
 
-        ---
+    ---
 
-        ## Instructions:
+    Respond in this exact JSON format:
 
-        1. Carefully read the hint and interpret the user's intention as precisely as possible.
-        2. From the candidates, select the **single element** that most clearly and confidently matches the hint.
-        3. ⚠️ If **no element clearly matches the user's intent**, return `null`. Do **not** try to force a match or guess.
-        4. Do **not** select an element just because it is the "closest" if it's still ambiguous or weakly related.
-        5. Do not assume anything beyond what is visible in the candidates list.
+    {{
+        "find": true | false,
+        "reason": "<short explanation of why this element was selected, or why nothing could be selected>"
+    }}
+    ＊Respond with a **pure JSON object only**, without any markdown formatting such as ```json or ``` blocks. Do not add any explanations, comments, or additional text—only return the JSON itself.
+    ---
+    '''
 
-        ---
-
-        Respond with a **pure JSON object** only, using the following format:
-
-        [{{
-            "selected_index": <index of the selected element> | null,
-            "reason": "<brief explanation of why this element was selected, or why nothing could be confidently selected>"
-        }}]
-
-        ＊Respond with a **pure JSON object only**, without any markdown formatting such as ```json or ``` blocks. Do not add any explanations, comments, or additional text—only return the JSON itself.
-            ---
-        '''
     return PromptTemplate(
         input_variables=['hint', 'candidates'],
         template=prompt
     ).format(
         hint=hint or "",
-        candidates=format_selector_map(selector_map)
+        candidates=candidates_str
     )
 
 def normalize_text(text: str) -> str:
@@ -350,74 +352,165 @@ async def find_elements_by_context_block(
     candidates = sorted(candidates, key=lambda x: x[0], reverse=True)
     return candidates
 
+# async def find_elements_by_hint(
+#     llm: BaseChatModel,
+#     hint: str,
+#     browser: BrowserContext
+# ) -> dict[str, str] | None:
+#     """
+#     ページ全体のDOMツリーからヒントノードを抽出し、
+#     context_blockとのテキスト類似度で候補を返す。
+#     """
+#     page = await browser.get_agent_current_page()
+#     dom_service = DomService(page)
+#     candidate = None
+#     for i in range(10):     
+#         visible_content = await dom_service.get_clickable_elements(
+#             focus_element=-1,
+#             viewport_expansion=0,
+#             highlight_elements=True,
+#         )
+#         visible_element_tree = visible_content.element_tree
+#         visible_element_tree_str = visible_element_tree.clickable_elements_to_string(include_attributes=include_attributes)
+            
+#         prompt = build_select_candidates_by_hint(hint=hint, candidates_str=visible_element_tree_str)
+#         state = await browser.get_state(cache_clickable_elements_hashes=True)
+#         message = HumanMessage(
+#             content=[
+#                 {'type': 'text', 'text': prompt},
+#                 {
+#                     'type': 'image_url',
+#                     'image_url': {'url': f'data:image/png;base64,{state.screenshot}'},
+#                 },
+#             ]
+#         )
+#         output = await llm.ainvoke([message])
+#         print("hint step", i, output.content)
+#         try:
+#             result = json.loads(output.content)
+#             if(result.get("selected_index", "")):
+#                 candidate = {"index": result.get("selected_index", ""), "reason": result.get("reason", "")}
+#         except:
+#             pass
+#         if candidate is not None:
+#             break
+#         else:
+#             at_bottom = await page.evaluate("""
+#                 () => {
+#                     return (window.scrollY + window.innerHeight) >= document.body.scrollHeight;
+#                 }
+#             """)
+#             if at_bottom:
+#                 break
+
+#             # スクロール実行
+#             scroll_offset = await page.evaluate("() => window.innerHeight")
+#             await page.evaluate(f"""
+#                 () => {{
+#                     window.scrollBy({{ top: {scroll_offset}, behavior: 'auto' }});
+#                 }}
+#             """)
+#             await asyncio.sleep(0.5)
+
+#     return candidate
 async def find_elements_by_hint(
     llm: BaseChatModel,
     hint: str,
     browser: BrowserContext
-) -> dict[str, str] | None:
+) -> bool:
     """
     ページ全体のDOMツリーからヒントノードを抽出し、
     context_blockとのテキスト類似度で候補を返す。
     """
     page = await browser.get_agent_current_page()
     dom_service = DomService(page)
-    candidates = []
-    page = await browser.get_agent_current_page()
-    await page.evaluate("""
-        () => {
-        // container全削除（ID重複対応）
-        document.querySelectorAll('#playwright-highlight-container').forEach(el => el.remove());
+    find_target = False
+    for i in range(4):     
+        visible_content = await dom_service.get_clickable_elements(
+            focus_element=-1,
+            viewport_expansion=0,
+            highlight_elements=True,
+        )
+        visible_element_tree = visible_content.element_tree
+        visible_element_tree_str = visible_element_tree.clickable_elements_to_string(include_attributes=include_attributes)
+            
+        prompt = build_select_candidates_by_hint(hint=hint, candidates_str=visible_element_tree_str)
+        state = await browser.get_state(cache_clickable_elements_hashes=True)
+        message = HumanMessage(
+            content=[
+                {'type': 'text', 'text': prompt},
+                {
+                    'type': 'image_url',
+                    'image_url': {'url': f'data:image/png;base64,{state.screenshot}'},
+                },
+            ]
+        )
+        output = await llm.ainvoke([message])
+        try:
+            result = json.loads(output.content)
+            print("reason", result, i)
+            if(result.get("find", False)):
+                find_target = True
+        except:
+            pass
+        if find_target:
+            break
+        else:
+            at_bottom = await page.evaluate("""
+                () => {
+                    return (window.scrollY + window.innerHeight) >= document.body.scrollHeight;
+                }
+            """)
+            if at_bottom:
+                break
 
-        // ラベルも削除
-        document.querySelectorAll('.playwright-highlight-label').forEach(el => el.remove());
-        }
-        """)
-
-    screenshot = await browser.take_screenshot(full_page=True)
-    
-
-
-    # clickable elements の取得
-    content = await dom_service.get_clickable_elements(
+            # スクロール実行
+            scroll_offset = await page.evaluate("() => window.innerHeight")
+            await page.evaluate(f"""
+                () => {{
+                    window.scrollBy({{ top: {scroll_offset}, behavior: 'auto' }});
+                }}
+            """)
+            await asyncio.sleep(0.5)
+    if not find_target:
+        msg = f'not_found'
+        logger.info(msg)
+        return ActionResult(extracted_content=msg)
+    visible_content = await dom_service.get_clickable_elements(
         focus_element=-1,
-        viewport_expansion=-1,
+        viewport_expansion=0,
         highlight_elements=True,
     )
-    none_text_selector_map = extract_none_text_selector_map(content.selector_map)
-
-    # Base64形式のサムネイルグリッド画像を生成
-    data_url = await generate_selector_thumbnail_grid_base64(
-        screenshot=screenshot,
-        selector_map=none_text_selector_map,
-        thumb_size=(100, 100),
-        items_per_row=5,
-        browser=browser
-    )
-    prompt = build_select_candidates_by_hint(hint=hint, selector_map=none_text_selector_map)
+    visible_element_tree = visible_content.element_tree
+    visible_element_tree_str = visible_element_tree.clickable_elements_to_string(include_attributes=include_attributes)
+    prompt = build_element_prompt("", "", hint or "", visible_element_tree_str)
+    state = await browser.get_state(cache_clickable_elements_hashes=True)
     message = HumanMessage(
         content=[
             {'type': 'text', 'text': prompt},
             {
                 'type': 'image_url',
-                'image_url': {'url': data_url},
+                'image_url': {'url': f'data:image/png;base64,{state.screenshot}'},
             },
         ]
     )
     output = await llm.ainvoke([message])
-    print(prompt, "output", output)
-    try:
-        result = json.loads(output.content)
-        for r in result:
-            candidates.append({"index": r.get("selected_index", None), "reason": r.get("reason", "")})
-    except:
-        pass
+    result = json.loads(output.content)
+    extracted_content = f"""
+        selected_index: {result["index"]},
+        reason: {result["reason"]},
+        ✅ Element has been identified successfully. You may now proceed to the next action.
+    """
 
-    return candidates
+    return ActionResult(
+        extracted_content=extracted_content,
+        include_in_memory=True
+    )
 
 
-def attach_find_target(controller: Controller):
+def attach_find_target_v2(controller: Controller):
     @controller.action("Find target element by context_block and target")
-    async def find_target(
+    async def find_target_v2(
         browser: BrowserContext,
         page_extraction_llm: BaseChatModel,
         target: str,
@@ -450,31 +543,25 @@ def attach_find_target(controller: Controller):
         if context_block:
             context_candidates = await find_elements_by_context_block(html_tree=html_tree, context_block=context_block)
         if not target and not context_block and hint:
-            hint_candidates = await find_elements_by_hint(browser = browser, llm = page_extraction_llm, hint = hint)
-            print("hint_candidates", hint_candidates)
-            if hint_candidates[0]:
-                result = hint_candidates[0]
-                extracted_content = f"""
-                    selected_index: {result["index"]},
-                    reason: {result["reason"]},
-                ✅ Element has been identified successfully. You may now proceed to the next action.
-                """
+            result = await find_elements_by_hint(browser = browser, llm = page_extraction_llm, hint = hint)
+            # if result is not None or not result.get("index"):
+            #     extracted_content = f"""
+            #         selected_index: {result["index"]},
+            #         reason: {result["reason"]},
+            #     ✅ Element has been identified successfully. You may now proceed to the next action.
+            #     """
 
-                return ActionResult(
-                    extracted_content=extracted_content,
-                    include_in_memory=True
-                )
-            else:
-                msg = f'❌ No candidates found for target: {target}, context_block: {context_block}, hint: {hint}'
-                logger.info(msg)
-                return ActionResult(extracted_content=msg)
+            #     return ActionResult(
+            #         extracted_content=extracted_content,
+            #         include_in_memory=True
+            #     )
+            return result
 
         candidates = target_candidates + context_candidates
         if not candidates:
             msg = f'❌ No candidates found for target {target}, context_block: {context_block}, hint: {hint}'
             logger.info(msg)
             return ActionResult(extracted_content=msg)
-
         # XPath階層でソート
         sorted_candidates = sorted(
             candidates,
@@ -492,10 +579,15 @@ def attach_find_target(controller: Controller):
             hint=hint or "",
             candidates=sorted_candidates
         )
+        print(formatted_prompt)
+        message = HumanMessage(
+            content=[
+                {'type': 'text', 'text': formatted_prompt},
+            ]
+        )
         try:
-            output = await page_extraction_llm.ainvoke(formatted_prompt)
+            output = await page_extraction_llm.ainvoke([message])
             data = json.loads(output.content)
-            print("data", data)
             xpath = data.get("selected_xpath", None)
             msg = xpath
             if xpath is not None:
@@ -533,7 +625,6 @@ def attach_find_target(controller: Controller):
                 ]
             )
             output = await page_extraction_llm.ainvoke([message])
-            print(prompt,"output", output)
             result = json.loads(output.content)
             extracted_content = f"""
                 selected_index: {result["index"]},

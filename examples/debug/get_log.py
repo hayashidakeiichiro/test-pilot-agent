@@ -10,7 +10,10 @@ from langchain.callbacks.base import BaseCallbackHandler
 from langchain_openai import ChatOpenAI
 from browser_use import ActionResult, Agent, Browser, BrowserConfig, Controller
 from examples.custom_functions.find_section_by_context import attach_find_section_by_context_block
-from examples.custom_functions.find_target import attach_find_target
+from examples.custom_functions.find_target_v3 import attach_find_target_v3, attach_drag_and_drop
+from examples.custom_functions.generate_icon_list_image import attach_generate_icon_list_image
+from examples.custom_functions.generate_site_summary_v3 import attach_generate_site_summary_v3
+
 
 load_dotenv()
 # スクショ保存ディレクトリ
@@ -105,34 +108,84 @@ class LoggingCallbackHandler(BaseCallbackHandler):
 from browser_use.browser.context import BrowserContext, BrowserContextConfig
 async def main_task():
 
-    url = "https://www.rakuten.co.jp/"
+    url = "https://zenn.dev"
     # url = "https://zenn.dev"
     task_prompt = f"""
-    以下のjsonをもとに、find_targetのactionを実行してください
+
+    以下のjsonをもとに、find_target_v2で要素を特定し、アクション実行してください
     [{{
         "action": "click_element",
-        "target": "マーベル",
-        "context_block": "ショップブランド",
-        "header_hint": null
+        "target": "",
+        "context_block": "人気商品ランキング",
+        "hint": "人気商品ランキングのスライダーを戻す左側のナビゲーション矢印をクリックしてください"
     }}]
+
+    ❌ Do NOT substitute `hint` or `context_block` as `target` if `target` is empty.
+    ❌ Do NOT invent or infer a new `target`.
     """
+    # task_prompt = f"""
+    # generate_site_summary_v3というアクションをステップ1で必ず実行して
+    # """
     clear_logs()
     controller = Controller()
-    attach_find_target(controller)
+    attach_find_target_v3(controller)
+    attach_drag_and_drop(controller)
+    # attach_generate_icon_list_image(controller)
+    # attach_generate_site_summary_v3(controller)
     browser = Browser(config=BrowserConfig(headless=True))
-    browser_context = BrowserContext(config=BrowserContextConfig(user_agent='foobarfoo'), browser=browser)
+    browser_context = BrowserContext(config=BrowserContextConfig(
+        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36"
+     ), browser=browser)
 
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.1, callbacks=[LoggingCallbackHandler()])
+    page_extraction_llm = ChatOpenAI(model="gpt-4o", temperature=0.1, callbacks=[LoggingCallbackHandler()])
 
+    async def callback(state, model_output, steps: int):
+        screenshot_base64=state.screenshot
+        save_image_from_base64(screenshot_base64)
     agent = Agent(
         task=task_prompt,
         llm=llm,
+        page_extraction_llm = page_extraction_llm,
         controller=controller,
         browser_context=browser_context,
-        initial_actions=[{'open_tab': {'url': url}}]
+        initial_actions=[{'open_tab': {'url': url}}],
+        register_new_step_callback=callback,
+        register_done_callback=callback,
     )
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    file_path = os.path.join(current_dir, "steps.json")
 
-    result = await agent.run(max_steps=2)
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            json_data = json.load(f)
+
+        test_steps_json_list = json_data
+    except (OSError, json.JSONDecodeError) as e:
+        print(f"Error reading JSON file: {e}")
+    
+    actions = []
+    i = 0
+
+    while i < len(test_steps_json_list):
+        step = test_steps_json_list[i]
+        if step["type"] == "recorded":
+            actions.append({
+                "find_target": {
+                    "test_steps_json": step
+                }
+            })
+        else:
+            actions.append({
+                "find_target": {
+                    "test_steps_json": step
+                }
+            })
+        i += 1
+
+    print(f"actions: {actions}")
+
+    result = await agent.run_actions(actions=actions)
 
 
 

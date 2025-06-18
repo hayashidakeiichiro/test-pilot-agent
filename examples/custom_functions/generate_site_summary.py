@@ -230,14 +230,14 @@ def build_select_candidates_prompt(target: str, context_block: str, hint: str, c
                 for i, (score, node) in enumerate(candidates)
             ])
         ) 
-def build_select_candidates_by_hint(hint: str, selector_map) -> str:
-    def format_selector_map(selector_map: dict[int, DOMElementNode]) -> str:
-        lines = []
-        for idx, node in sorted(selector_map.items()):
-            tag = node.tag_name or "unknown"
-            text = node.get_all_text_till_next_clickable_element()
-            lines.append(f"[{idx}] <{tag}> {text}")
-        return "\n".join(lines)
+def format_selector_map(selector_map: dict[int, DOMElementNode]) -> str:
+    lines = []
+    for idx, node in sorted(selector_map.items()):
+        tag = node.tag_name or "unknown"
+        text = node.get_all_text_till_next_clickable_element()
+        lines.append(f"[{idx}] <{tag}> {text}")
+    return "\n".join(lines)
+def build_select_candidates_by_hint(hint: str, candiddates_str: str) -> str:
     prompt = '''
         You are given a list of clickable candidate elements extracted from a web page. Each element includes the following metadata:
         - `index`: A numeric identifier used to reference the element
@@ -293,7 +293,7 @@ def build_select_candidates_by_hint(hint: str, selector_map) -> str:
         template=prompt
     ).format(
         hint=hint or "",
-        candidates=format_selector_map(selector_map)
+        candidates=candiddates_str
     )
 
 def normalize_text(text: str) -> str:
@@ -404,7 +404,7 @@ async def find_elements_by_hint(
         ]
     )
     output = await llm.ainvoke([message])
-    print(prompt, "output", output)
+    # print(prompt, "output", output)
     try:
         result = json.loads(output.content)
         for r in result:
@@ -415,9 +415,9 @@ async def find_elements_by_hint(
     return candidates
 
 
-def attach_find_target(controller: Controller):
+def attach_generate_site_summary(controller: Controller):
     @controller.action("Find target element by context_block and target")
-    async def find_target(
+    async def generate_site_summary(
         browser: BrowserContext,
         page_extraction_llm: BaseChatModel,
         target: str,
@@ -433,120 +433,45 @@ def attach_find_target(controller: Controller):
             viewport_expansion=-1,
             highlight_elements=True,
         )
-        html_tree = content.element_tree
 
-        selector_map = content.selector_map
 
-        visible_content = await dom_service.get_clickable_elements(
+        await page.evaluate("""
+            () => {
+            // container全削除（ID重複対応）
+            document.querySelectorAll('#playwright-highlight-container').forEach(el => el.remove());
+
+            // ラベルも削除
+            document.querySelectorAll('.playwright-highlight-label').forEach(el => el.remove());
+            }
+            """)
+        # screenshot = await browser.take_screenshot(full_page=True)
+    
+        # clickable elements の取得
+        content = await dom_service.get_clickable_elements(
             focus_element=-1,
-            viewport_expansion=0,
+            viewport_expansion=-1,
             highlight_elements=True,
         )
+        none_text_selector_map = extract_none_text_selector_map(content.selector_map)
+        html_tree = content.element_tree
 
-        target_candidates = []
-        context_candidates = []
-        if target:
-            target_candidates = await find_elements_by_target(selector_map = selector_map, target=target)
-        if context_block:
-            context_candidates = await find_elements_by_context_block(html_tree=html_tree, context_block=context_block)
-        if not target and not context_block and hint:
-            hint_candidates = await find_elements_by_hint(browser = browser, llm = page_extraction_llm, hint = hint)
-            print("hint_candidates", hint_candidates)
-            if hint_candidates[0]:
-                result = hint_candidates[0]
-                extracted_content = f"""
-                    selected_index: {result["index"]},
-                    reason: {result["reason"]},
-                ✅ Element has been identified successfully. You may now proceed to the next action.
-                """
-
-                return ActionResult(
-                    extracted_content=extracted_content,
-                    include_in_memory=True
-                )
-            else:
-                msg = f'❌ No candidates found for target: {target}, context_block: {context_block}, hint: {hint}'
-                logger.info(msg)
-                return ActionResult(extracted_content=msg)
-
-        candidates = target_candidates + context_candidates
-        if not candidates:
-            msg = f'❌ No candidates found for target {target}, context_block: {context_block}, hint: {hint}'
-            logger.info(msg)
-            return ActionResult(extracted_content=msg)
-
-        # XPath階層でソート
-        sorted_candidates = sorted(
-            candidates,
-            key=functools.cmp_to_key(
-                lambda a, b: hierarchical_compare(
-                    xpath_sort_key(a[1].xpath),
-                    xpath_sort_key(b[1].xpath),
-                )
-            ),
-        )
-        
-        formatted_prompt = build_select_candidates_prompt(
-            target=target,
-            context_block=context_block,
-            hint=hint or "",
-            candidates=sorted_candidates
-        )
-        try:
-            output = await page_extraction_llm.ainvoke(formatted_prompt)
-            data = json.loads(output.content)
-            print("data", data)
-            xpath = data.get("selected_xpath", None)
-            msg = xpath
-            if xpath is not None:
-                locator = page.locator(f'xpath={xpath}')
-                if await locator.count() > 0:
-                    first = locator.first
-                    if await first.is_visible():
-                        await first.evaluate("""
-                            el => {
-                                const rect = el.getBoundingClientRect();
-                                const offset = 80;  // 上から80pxの余白を空けたい
-                                window.scrollBy({
-                                top: rect.top - offset,
-                                behavior: 'auto'
-                                });
-                            }
-                        """)
-                        await asyncio.sleep(0.5)  # Wait for scroll to complete
-            visible_content = await dom_service.get_clickable_elements(
-                focus_element=-1,
-                viewport_expansion=0,
-                highlight_elements=True,
-            )
-            visible_element_tree = visible_content.element_tree
-            visible_element_tree_str = visible_element_tree.clickable_elements_to_string(include_attributes=include_attributes)
-            prompt = build_element_prompt(target, context_block, hint or "", visible_element_tree_str)
-            state = await browser.get_state(cache_clickable_elements_hashes=True)
-            message = HumanMessage(
-                content=[
-                    {'type': 'text', 'text': prompt},
-                    {
-                        'type': 'image_url',
-                        'image_url': {'url': f'data:image/png;base64,{state.screenshot}'},
-                    },
-                ]
-            )
-            output = await page_extraction_llm.ainvoke([message])
-            print(prompt,"output", output)
-            result = json.loads(output.content)
-            extracted_content = f"""
-                selected_index: {result["index"]},
-                reason: {result["reason"]},
-               ✅ Element has been identified successfully. You may now proceed to the next action.
-            """
-
-            return ActionResult(
-                extracted_content=extracted_content,
-                include_in_memory=True
-            )
-        except Exception as e:
-            logger.debug(f'Error extracting content: {e}')
-            msg = f'📄 Extraction fallback content:\n{e}'
-            logger.info(msg)
-            return ActionResult(extracted_content=msg)
+        # Base64形式のサムネイルグリッド画像を生成
+        # data_url = await generate_selector_thumbnail_grid_base64(
+        #     screenshot=screenshot,
+        #     selector_map=none_text_selector_map,
+        #     thumb_size=(100, 100),
+        #     items_per_row=5,
+        #     browser=browser
+        # )
+        prompt = build_select_candidates_by_hint(hint=hint, candiddates_str=html_tree.clickable_elements_to_string_compact(include_attributes=include_attributes, max_chars=4000))
+        # message = HumanMessage(
+        #     content=[
+        #         {'type': 'text', 'text': prompt},
+        #         # {
+        #         #     'type': 'image_url',
+        #         #     'image_url': {'url': data_url},
+        #         # },
+        #     ]
+        # )
+        # output = await page_extraction_llm.ainvoke([message])
+        print(prompt)
