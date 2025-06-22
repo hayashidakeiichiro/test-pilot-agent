@@ -211,51 +211,7 @@ def build_select_candidates_prompt(target: str, context_block: str, hint: str, c
                 for i, (score, node) in enumerate(candidates)
             ])
         ) 
-def build_select_candidates_by_hint(hint: str, candidates_str: str) -> str:
-    # prompt = '''
-    #     You are given a list of clickable candidate elements extracted from a web page. Each element includes the following metadata:
-    #     - `index`: A numeric identifier used to reference the element
-    #     - `text`: The visible label text (if any)
-    #     - `tag`: The HTML tag (e.g., a, button, div)
-    #     - `attributes`: Selected HTML attributes (e.g., class, role, aria-label)
-
-    #     Your goal is to identify the **most relevant element to click** based on the user’s natural-language hint. The hint may describe visual position (e.g., "top-right arrow"), purpose (e.g., "next button"), or structure (e.g., "first item in slider").
-
-    #     ---
-
-    #     ## User Hint:
-    #     "{hint}"
-
-    #     ---
-
-    #     ## Candidate Elements:
-    #     {candidates}
-
-    #     ---
-
-    #     ## Instructions:
-
-    #     1. Read the hint carefully and interpret the user's intention as precisely as possible.
-    #     2. Select **exactly one** element that matches the hint clearly and unambiguously.
-    #     3. ⚠️ If **no element clearly and confidently matches the user's hint**, return `null`. 
-    #     - This includes cases where the correct element may be **off-screen or not yet loaded**.
-    #     - Do **not** try to guess or loosely match just because something is visible.
-    #     4. It is completely acceptable—and often correct—to return `null` when:
-    #     - All visible elements are ambiguous or weakly related.
-    #     - The user's hint refers to something that might be off-screen.
-    #     5. Your job is not to force a match but to be precise and cautious. If you make an incorrect selection, the user will be misled.
-
-    #     ---
-
-    #     Respond in this exact JSON format:
-
-    #     {{
-    #     "selected_index": <index of the selected element> | null,
-    #     "reason": "<brief explanation of why this element was selected, or why nothing could be confidently selected>"
-    #     }}
-
-    #     ＊Respond with a **pure JSON object only**, without any markdown formatting such as ```json or ``` blocks. Do not add any explanations, comments, or additional text—only return the JSON itself.
-    #     '''
+def build_select_candidates_by_hint(hint: str, candidates_str: str, actions_str: str) -> str:
     prompt = '''
     You are shown a screenshot of a web page and a user's instruction.
 
@@ -277,25 +233,60 @@ def build_select_candidates_by_hint(hint: str, candidates_str: str) -> str:
     2. Try to find any visual element or section that appears to match the user's hint.
     3. ⚠️ If you are **not confident** that the element is present in the image, respond "not_found".
     4. If you see a clearly matching element, respond "found".
+    5. Also, choose and return the most appropriate action to take next.
 
+
+    ---
+
+    ### Actions:
+    {actions_str}
     ---
 
     Respond in this exact JSON format:
 
     {{
         "find": true | false,
-        "reason": "<short explanation of why this element was selected, or why nothing could be selected>"
+        "action": {{
+            go_to_url: {{url: {{type: string}}}} |
+            go_back: {{}} |
+            wait: {{seconds: {{default: 3, type: integer}}}} |
+            click_element_by_index: {{index: {{type: integer}}, xpath: {{anyOf: [{{type: string}}, {{type: null}}], default: null}}}} |
+            input_text: {{index: {{type: integer}}, text: {{type: string}}, xpath: {{anyOf: [{{type: string}}, {{type: null}}], default: null}}}} |
+            switch_tab: {{page_id: {{type: integer}}}} |
+            open_tab: {{url: {{type: string}}}} |
+            close_tab: {{page_id: {{type: integer}}}} |
+            extract_content: {{goal: {{type: string}}, should_strip_link_urls: {{type: boolean}}}} |
+            scroll_down: {{amount: {{anyOf: [{{type: integer}}, {{type: null}}], default: null}}}} |
+            scroll_up: {{amount: {{anyOf: [{{type: integer}}, {{type: null}}], default: null}}}} |
+            send_keys: {{keys: {{type: string}}}} |
+            scroll_to_text: {{text: {{type: string}}}} |
+            get_dropdown_options: {{index: {{type: integer}}}} |
+            select_dropdown_option: {{index: {{type: integer}}, text: {{type: string}}}} |
+            drag_drop: {{
+                element_source: {{anyOf: [{{type: string}}, {{type: null}}], default: null}},
+                element_target: {{anyOf: [{{type: string}}, {{type: null}}], default: null}},
+                element_source_offset: {{anyOf: [{{type: object}}, {{type: null}}], default: null}},
+                element_target_offset: {{anyOf: [{{type: object}}, {{type: null}}], default: null}},
+                coord_source_x: {{anyOf: [{{type: integer}}, {{type: null}}], default: null}},
+                coord_source_y: {{anyOf: [{{type: integer}}, {{type: null}}], default: null}},
+                coord_target_x: {{anyOf: [{{type: integer}}, {{type: null}}], default: null}},
+                coord_target_y: {{anyOf: [{{type: integer}}, {{type: null}}], default: null}},
+                steps: {{anyOf: [{{type: integer}}, {{type: null}}], default: 10}},
+                delay_ms: {{anyOf: [{{type: integer}}, {{type: null}}], default: 5}}
+            }}
+        }}
     }}
     ＊Respond with a **pure JSON object only**, without any markdown formatting such as ```json or ``` blocks. Do not add any explanations, comments, or additional text—only return the JSON itself.
     ---
     '''
 
     return PromptTemplate(
-        input_variables=['hint', 'candidates'],
+        input_variables=['hint', 'candidates', 'actions_str'],
         template=prompt
     ).format(
         hint=hint or "",
-        candidates=candidates_str
+        candidates=candidates_str,
+        actions_str=actions_str
     )
 
 def normalize_text(text: str) -> str:
@@ -352,71 +343,11 @@ async def find_elements_by_context_block(
     candidates = sorted(candidates, key=lambda x: x[0], reverse=True)
     return candidates
 
-# async def find_elements_by_hint(
-#     llm: BaseChatModel,
-#     hint: str,
-#     browser: BrowserContext
-# ) -> dict[str, str] | None:
-#     """
-#     ページ全体のDOMツリーからヒントノードを抽出し、
-#     context_blockとのテキスト類似度で候補を返す。
-#     """
-#     page = await browser.get_agent_current_page()
-#     dom_service = DomService(page)
-#     candidate = None
-#     for i in range(10):     
-#         visible_content = await dom_service.get_clickable_elements(
-#             focus_element=-1,
-#             viewport_expansion=0,
-#             highlight_elements=True,
-#         )
-#         visible_element_tree = visible_content.element_tree
-#         visible_element_tree_str = visible_element_tree.clickable_elements_to_string(include_attributes=include_attributes)
-            
-#         prompt = build_select_candidates_by_hint(hint=hint, candidates_str=visible_element_tree_str)
-#         state = await browser.get_state(cache_clickable_elements_hashes=True)
-#         message = HumanMessage(
-#             content=[
-#                 {'type': 'text', 'text': prompt},
-#                 {
-#                     'type': 'image_url',
-#                     'image_url': {'url': f'data:image/png;base64,{state.screenshot}'},
-#                 },
-#             ]
-#         )
-#         output = await llm.ainvoke([message])
-#         print("hint step", i, output.content)
-#         try:
-#             result = json.loads(output.content)
-#             if(result.get("selected_index", "")):
-#                 candidate = {"index": result.get("selected_index", ""), "reason": result.get("reason", "")}
-#         except:
-#             pass
-#         if candidate is not None:
-#             break
-#         else:
-#             at_bottom = await page.evaluate("""
-#                 () => {
-#                     return (window.scrollY + window.innerHeight) >= document.body.scrollHeight;
-#                 }
-#             """)
-#             if at_bottom:
-#                 break
-
-#             # スクロール実行
-#             scroll_offset = await page.evaluate("() => window.innerHeight")
-#             await page.evaluate(f"""
-#                 () => {{
-#                     window.scrollBy({{ top: {scroll_offset}, behavior: 'auto' }});
-#                 }}
-#             """)
-#             await asyncio.sleep(0.5)
-
-#     return candidate
 async def find_elements_by_hint(
     llm: BaseChatModel,
     hint: str,
-    browser: BrowserContext
+    browser: BrowserContext,
+    actions_str: str,
 ) -> bool:
     """
     ページ全体のDOMツリーからヒントノードを抽出し、
@@ -425,6 +356,7 @@ async def find_elements_by_hint(
     page = await browser.get_agent_current_page()
     dom_service = DomService(page)
     find_target = False
+    selected_action = None
     for i in range(4):     
         visible_content = await dom_service.get_clickable_elements(
             focus_element=-1,
@@ -434,7 +366,7 @@ async def find_elements_by_hint(
         visible_element_tree = visible_content.element_tree
         visible_element_tree_str = visible_element_tree.clickable_elements_to_string(include_attributes=include_attributes)
             
-        prompt = build_select_candidates_by_hint(hint=hint, candidates_str=visible_element_tree_str)
+        prompt = build_select_candidates_by_hint(hint=hint, candidates_str=visible_element_tree_str, actions_str=actions_str)
         state = await browser.get_state(cache_clickable_elements_hashes=True)
         message = HumanMessage(
             content=[
@@ -448,9 +380,9 @@ async def find_elements_by_hint(
         output = await llm.ainvoke([message])
         try:
             result = json.loads(output.content)
-            print("reason", result, i)
             if(result.get("find", False)):
                 find_target = True
+                selected_action = result.get("action", None)
         except:
             pass
         if find_target:
@@ -476,168 +408,25 @@ async def find_elements_by_hint(
         msg = f'not_found'
         logger.info(msg)
         return ActionResult(extracted_content=msg)
-    visible_content = await dom_service.get_clickable_elements(
-        focus_element=-1,
-        viewport_expansion=0,
-        highlight_elements=True,
-    )
-    visible_element_tree = visible_content.element_tree
-    visible_element_tree_str = visible_element_tree.clickable_elements_to_string(include_attributes=include_attributes)
-    prompt = build_element_prompt("", "", hint or "", visible_element_tree_str)
-    state = await browser.get_state(cache_clickable_elements_hashes=True)
-    message = HumanMessage(
-        content=[
-            {'type': 'text', 'text': prompt},
-            {
-                'type': 'image_url',
-                'image_url': {'url': f'data:image/png;base64,{state.screenshot}'},
-            },
-        ]
-    )
-    output = await llm.ainvoke([message])
-    result = json.loads(output.content)
-    extracted_content = f"""
-        selected_index: {result["index"]},
-        reason: {result["reason"]},
-        ✅ Element has been identified successfully. You may now proceed to the next action.
-    """
-
-    return ActionResult(
-        extracted_content=extracted_content,
-        include_in_memory=True
-    )
+    return selected_action
 
 
-def attach_find_target_v2(controller: Controller):
+def attach_run_instruction_based_test(controller: Controller):
     @controller.action("Find target element by context_block and target")
-    async def find_target_v2(
+    async def run_instruction_based_test(
         browser: BrowserContext,
         page_extraction_llm: BaseChatModel,
-        target: str,
-        context_block: str,
-        hint: Optional[str] = None
+        action: str
     ):
-        page = await browser.get_agent_current_page()
-        dom_service = DomService(page)
-
-        # ページからクリック可能要素を取得
-        content = await dom_service.get_clickable_elements(
-            focus_element=-1,
-            viewport_expansion=-1,
-            highlight_elements=True,
-        )
-        html_tree = content.element_tree
-
-        selector_map = content.selector_map
-
-        visible_content = await dom_service.get_clickable_elements(
-            focus_element=-1,
-            viewport_expansion=0,
-            highlight_elements=True,
-        )
-
-        target_candidates = []
-        context_candidates = []
-        if target:
-            target_candidates = await find_elements_by_target(selector_map = selector_map, target=target)
-        if context_block:
-            context_candidates = await find_elements_by_context_block(html_tree=html_tree, context_block=context_block)
-        if not target and not context_block and hint:
-            result = await find_elements_by_hint(browser = browser, llm = page_extraction_llm, hint = hint)
-            # if result is not None or not result.get("index"):
-            #     extracted_content = f"""
-            #         selected_index: {result["index"]},
-            #         reason: {result["reason"]},
-            #     ✅ Element has been identified successfully. You may now proceed to the next action.
-            #     """
-
-            #     return ActionResult(
-            #         extracted_content=extracted_content,
-            #         include_in_memory=True
-            #     )
-            return result
-
-        candidates = target_candidates + context_candidates
-        if not candidates:
-            msg = f'❌ No candidates found for target {target}, context_block: {context_block}, hint: {hint}'
+        current_page = await browser.get_agent_current_page()
+        actions_str = controller.registry.get_prompt_description()
+        selected_action = await find_elements_by_hint(browser = browser, llm = page_extraction_llm, hint = action, actions_str = actions_str)
+        print(f'selected_action: {selected_action}')
+        if selected_action is None:
+            msg = f'❌ No element found for hint: {action}'
             logger.info(msg)
             return ActionResult(extracted_content=msg)
-        # XPath階層でソート
-        sorted_candidates = sorted(
-            candidates,
-            key=functools.cmp_to_key(
-                lambda a, b: hierarchical_compare(
-                    xpath_sort_key(a[1].xpath),
-                    xpath_sort_key(b[1].xpath),
-                )
-            ),
+        return ActionResult(
+            extracted_content=f'next_action:{json.dumps(selected_action)}'
         )
-        
-        formatted_prompt = build_select_candidates_prompt(
-            target=target,
-            context_block=context_block,
-            hint=hint or "",
-            candidates=sorted_candidates
-        )
-        print(formatted_prompt)
-        message = HumanMessage(
-            content=[
-                {'type': 'text', 'text': formatted_prompt},
-            ]
-        )
-        try:
-            output = await page_extraction_llm.ainvoke([message])
-            data = json.loads(output.content)
-            xpath = data.get("selected_xpath", None)
-            msg = xpath
-            if xpath is not None:
-                locator = page.locator(f'xpath={xpath}')
-                if await locator.count() > 0:
-                    first = locator.first
-                    if await first.is_visible():
-                        await first.evaluate("""
-                            el => {
-                                const rect = el.getBoundingClientRect();
-                                const offset = 80;  // 上から80pxの余白を空けたい
-                                window.scrollBy({
-                                top: rect.top - offset,
-                                behavior: 'auto'
-                                });
-                            }
-                        """)
-                        await asyncio.sleep(0.5)  # Wait for scroll to complete
-            visible_content = await dom_service.get_clickable_elements(
-                focus_element=-1,
-                viewport_expansion=0,
-                highlight_elements=True,
-            )
-            visible_element_tree = visible_content.element_tree
-            visible_element_tree_str = visible_element_tree.clickable_elements_to_string(include_attributes=include_attributes)
-            prompt = build_element_prompt(target, context_block, hint or "", visible_element_tree_str)
-            state = await browser.get_state(cache_clickable_elements_hashes=True)
-            message = HumanMessage(
-                content=[
-                    {'type': 'text', 'text': prompt},
-                    {
-                        'type': 'image_url',
-                        'image_url': {'url': f'data:image/png;base64,{state.screenshot}'},
-                    },
-                ]
-            )
-            output = await page_extraction_llm.ainvoke([message])
-            result = json.loads(output.content)
-            extracted_content = f"""
-                selected_index: {result["index"]},
-                reason: {result["reason"]},
-               ✅ Element has been identified successfully. You may now proceed to the next action.
-            """
 
-            return ActionResult(
-                extracted_content=extracted_content,
-                include_in_memory=True
-            )
-        except Exception as e:
-            logger.debug(f'Error extracting content: {e}')
-            msg = f'📄 Extraction fallback content:\n{e}'
-            logger.info(msg)
-            return ActionResult(extracted_content=msg)

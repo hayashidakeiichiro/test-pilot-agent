@@ -966,8 +966,6 @@ class Agent(Generic[Context]):
 		logger.info(f'📍 Step {self.state.n_steps}')
 		state = None
 		result: list[ActionResult] = []
-		step_start_time = time.time()
-		tokens = 0
 
 		try:
 			state = await self.browser_context.get_state(cache_clickable_elements_hashes=True)
@@ -1008,6 +1006,11 @@ class Agent(Generic[Context]):
 
 			result = await self.multi_act(action)
 			self.state.last_result = result
+			if (result[0].extracted_content is not None and result[0].extracted_content.startswith('next_action:')):
+				next_action = result[0].extracted_content.split('next_action:')[1].strip()
+				next_action = json.loads(next_action)
+				next_action = self._convert_initial_actions([next_action])
+				result = await self.multi_act(next_action)
 
 			if result and result[-1].is_done:
 				logger.info(f'📄 Result: {result[-1].extracted_content}')
@@ -1025,7 +1028,6 @@ class Agent(Generic[Context]):
 			self.state.last_result = result
 
 		finally:
-			step_end_time = time.time()
 			self.telemetry.capture(AgentStepTelemetryEvent(
 				agent_id=self.state.agent_id,
 				step=self.state.n_steps,
@@ -1033,19 +1035,10 @@ class Agent(Generic[Context]):
 				consecutive_failures=self.state.consecutive_failures,
 				step_error=[r.error for r in result if r.error] if result else ['No result'],
 			))
-
-			if state:
-				metadata = StepMetadata(
-					step_number=self.state.n_steps,
-					step_start_time=step_start_time,
-					step_end_time=step_end_time,
-					input_tokens=tokens,
-				)
-				# self._make_history_item(AgentModelOutput(action=action), state, result, metadata)
 	#test-pilot
 	@time_execution_async('--run (agent)')
 	async def run_actions(
-		self, max_steps: int = 100, actions: list[ActionModel] = [], on_step_start: AgentHookFunc | None = None, on_step_end: AgentHookFunc | None = None
+		self, max_steps: int = 100, actions: list[dict[str, dict[str, Any]]] = [], on_step_start: AgentHookFunc | None = None, on_step_end: AgentHookFunc | None = None
 	) -> AgentHistoryList:
 		"""Execute the task with maximum number of steps"""
 

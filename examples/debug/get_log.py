@@ -9,10 +9,9 @@ from PIL import Image
 from langchain.callbacks.base import BaseCallbackHandler
 from langchain_openai import ChatOpenAI
 from browser_use import ActionResult, Agent, Browser, BrowserConfig, Controller
-from examples.custom_functions.find_section_by_context import attach_find_section_by_context_block
-from examples.custom_functions.find_target_v3 import attach_find_target_v3, attach_drag_and_drop
-from examples.custom_functions.generate_icon_list_image import attach_generate_icon_list_image
-from examples.custom_functions.generate_site_summary_v3 import attach_generate_site_summary_v3
+from examples.custom_functions.find_target_v3 import attach_find_target_v3
+from examples.custom_functions.run_instruction_based_test import attach_run_instruction_based_test
+from examples.custom_functions.assert_test_success import attach_assert_test_success
 
 
 load_dotenv()
@@ -108,7 +107,7 @@ class LoggingCallbackHandler(BaseCallbackHandler):
 from browser_use.browser.context import BrowserContext, BrowserContextConfig
 async def main_task():
 
-    url = "https://zenn.dev"
+    url = "https://www.w3schools.com/html/html5_draganddrop.asp"
     # url = "https://zenn.dev"
     task_prompt = f"""
 
@@ -129,7 +128,8 @@ async def main_task():
     clear_logs()
     controller = Controller()
     attach_find_target_v3(controller)
-    attach_drag_and_drop(controller)
+    attach_run_instruction_based_test(controller)
+    attach_assert_test_success(controller)
     # attach_generate_icon_list_image(controller)
     # attach_generate_site_summary_v3(controller)
     browser = Browser(config=BrowserConfig(headless=True))
@@ -177,13 +177,18 @@ async def main_task():
             })
         else:
             actions.append({
-                "find_target": {
-                    "test_steps_json": step
+                "run_instruction_based_test": {
+                    "action": step.get("action", "")
                 }
             })
         i += 1
 
     print(f"actions: {actions}")
+    actions.append({
+        "assert_test_success": {
+            "assertion": "https://zenn.dev/articles/exploreに遷移していること",
+        }
+    })
 
     result = await agent.run_actions(actions=actions)
 
