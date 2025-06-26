@@ -997,9 +997,9 @@ class Agent(Generic[Context]):
 
 			if self.register_new_step_callback:
 				if inspect.iscoroutinefunction(self.register_new_step_callback):
-					await self.register_new_step_callback(state, action, self.state.n_steps)
+					await self.register_new_step_callback(state, None, self.state.n_steps)
 				else:
-					self.register_new_step_callback(state, action, self.state.n_steps)
+					self.register_new_step_callback(state, None, self.state.n_steps)
 
 			self._message_manager._remove_last_state_message()
 			# self._message_manager.add_model_output(AgentModelOutput(action=action))
