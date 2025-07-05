@@ -45,6 +45,7 @@ from browser_use.agent.views import (
 	AgentStepInfo,
 	StepMetadata,
 	ToolCallingMethod,
+	AgentBrain
 )
 from browser_use.browser.browser import Browser
 from browser_use.browser.context import BrowserContext
@@ -107,6 +108,11 @@ class Agent(Generic[Context]):
 		initial_actions: list[dict[str, dict[str, Any]]] | None = None,
 		# Cloud Callbacks
 		register_new_step_callback: (
+			Callable[['BrowserState', 'AgentOutput', int], None]  # Sync callback
+			| Callable[['BrowserState', 'AgentOutput', int], Awaitable[None]]  # Async callback
+			| None
+		) = None,
+		register_end_step_callback: (
 			Callable[['BrowserState', 'AgentOutput', int], None]  # Sync callback
 			| Callable[['BrowserState', 'AgentOutput', int], Awaitable[None]]  # Async callback
 			| None
@@ -313,6 +319,7 @@ class Agent(Generic[Context]):
 
 		# Callbacks
 		self.register_new_step_callback = register_new_step_callback
+		self.register_end_step_callback = register_end_step_callback
 		self.register_done_callback = register_done_callback
 		self.register_external_agent_status_raise_error_callback = register_external_agent_status_raise_error_callback
 
@@ -1016,6 +1023,23 @@ class Agent(Generic[Context]):
 				logger.info(f'📄 Result: {result[-1].extracted_content}')
 
 			self.state.consecutive_failures = 0
+			brain = AgentBrain(
+				evaluation_previous_goal="",
+				memory="",
+				next_goal=""
+			)
+
+			# AgentOutputをインスタンス化
+			model_output = AgentOutput(
+				current_state=brain,
+				action=action,
+				action_result=result
+			)
+			if self.register_end_step_callback:
+				if inspect.iscoroutinefunction(self.register_end_step_callback):
+					await self.register_end_step_callback(state, model_output, self.state.n_steps)
+				else:
+					self.register_end_step_callback(state, model_output, self.state.n_steps)
 
 		except InterruptedError:
 			self.state.last_result = [ActionResult(error='The agent was paused mid-step.', include_in_memory=False)]

@@ -156,6 +156,7 @@ class AgentOutput(BaseModel):
 		description='List of actions to execute',
 		json_schema_extra={'min_items': 1},  # Ensure at least one action is provided
 	)
+	action_result:list[ActionResult]
 
 	@staticmethod
 	def type_with_custom_actions(custom_actions: type[ActionModel]) -> type[AgentOutput]:

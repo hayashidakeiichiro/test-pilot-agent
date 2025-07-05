@@ -143,6 +143,7 @@ async def main_task():
     async def callback(state, model_output, steps: int):
         screenshot_base64=state.screenshot
         save_image_from_base64(screenshot_base64)
+        print(model_output)
     agent = Agent(
         task=task_prompt,
         llm=llm,
@@ -150,7 +151,7 @@ async def main_task():
         controller=controller,
         browser_context=browser_context,
         initial_actions=[{'open_tab': {'url': url}}],
-        register_new_step_callback=callback,
+        register_end_step_callback=callback,
         register_done_callback=callback,
     )
     current_dir = os.path.dirname(os.path.abspath(__file__))
