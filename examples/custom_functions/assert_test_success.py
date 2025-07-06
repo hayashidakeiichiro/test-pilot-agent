@@ -170,9 +170,9 @@ async def assert_result_on_screen(
             reason = result.get("reason", "")
 
             if status == "success":
-                return ActionResult(extracted_content=f"✅ Test success indicator found: {reason}", success=True)
+                return ActionResult(extracted_content=f"✅ Test success indicator found: {reason}", success=True, is_done=True)
             elif status == "failure":
-                return ActionResult(extracted_content=f"❌ Test failure indicator found: {reason}", success=False)
+                return ActionResult(extracted_content=f"❌ Test failure indicator found: {reason}", success=False, is_done=True)
 
             # status == "uncertain" → scroll if LLM suggests
             if scroll == "bottom":
@@ -189,7 +189,7 @@ async def assert_result_on_screen(
             logger.warning(f"LLM response error or parsing failure: {e}")
 
     # max_attemptsまで試しても success にならなかった
-    return ActionResult(extracted_content=f"❌ Test result not confirmed after scrolling: {reason}", success=False)
+    return ActionResult(extracted_content=f"❌ Test result not confirmed after scrolling: {reason}", success=False, is_done=True)
 
 
 def attach_assert_test_success(controller: Controller):

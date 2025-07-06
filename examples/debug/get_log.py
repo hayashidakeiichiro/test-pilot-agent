@@ -151,8 +151,7 @@ async def main_task():
         controller=controller,
         browser_context=browser_context,
         initial_actions=[{'open_tab': {'url': url}}],
-        register_end_step_callback=callback,
-        register_done_callback=callback,
+        register_end_step_callback=callback
     )
     current_dir = os.path.dirname(os.path.abspath(__file__))
     file_path = os.path.join(current_dir, "steps.json")
@@ -192,6 +191,7 @@ async def main_task():
     })
 
     result = await agent.run_actions(actions=actions)
+    print(result)
 
 
 

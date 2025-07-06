@@ -973,6 +973,7 @@ class Agent(Generic[Context]):
 		logger.info(f'📍 Step {self.state.n_steps}')
 		state = None
 		result: list[ActionResult] = []
+		step_start_time = time.time()
 
 		try:
 			state = await self.browser_context.get_state(cache_clickable_elements_hashes=True)
@@ -1052,6 +1053,15 @@ class Agent(Generic[Context]):
 			self.state.last_result = result
 
 		finally:
+			if state:
+				step_end_time = time.time()
+				metadata = StepMetadata(
+					step_number=self.state.n_steps,
+					step_start_time=step_start_time,
+					step_end_time=step_end_time,
+					input_tokens=0,
+				)
+				self._make_history_item(model_output, state, result, metadata)
 			self.telemetry.capture(AgentStepTelemetryEvent(
 				agent_id=self.state.agent_id,
 				step=self.state.n_steps,
