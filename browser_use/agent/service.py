@@ -1,5 +1,6 @@
 import asyncio
 import gc
+import base64
 import inspect
 import json
 import logging
@@ -113,8 +114,8 @@ class Agent(Generic[Context]):
 			| None
 		) = None,
 		register_end_step_callback: (
-			Callable[['BrowserState', 'AgentOutput', int], None]  # Sync callback
-			| Callable[['BrowserState', 'AgentOutput', int], Awaitable[None]]  # Async callback
+			Callable[['BrowserState', 'AgentOutput', int, str], None]  # Sync callback
+			| Callable[['BrowserState', 'AgentOutput', int, str], Awaitable[None]]  # Async callback
 			| None
 		) = None,
 		register_done_callback: (
@@ -1004,11 +1005,23 @@ class Agent(Generic[Context]):
 			self.state.n_steps += 1
 
 			if self.register_new_step_callback:
-				state = await self.browser_context.get_state(cache_clickable_elements_hashes=False)
+				page = await self.browser_context.get_agent_current_page()
+				await page.evaluate('''
+					() => {
+						const overlays = document.querySelectorAll("#playwright-highlight-container");
+						overlays.forEach(el => el.remove());
+					}
+				''')
+				screenshot = await page.screenshot(
+					full_page=False,
+					animations='disabled',
+				)
+
+				screenshot_b64 = base64.b64encode(screenshot).decode('utf-8')
 				if inspect.iscoroutinefunction(self.register_new_step_callback):
-					await self.register_new_step_callback(state, None, self.state.n_steps)
+					await self.register_new_step_callback(state, None, self.state.n_steps, screenshot_b64)
 				else:
-					self.register_new_step_callback(state, None, self.state.n_steps)
+					self.register_new_step_callback(state, None, self.state.n_steps, screenshot_b64)
 
 			self._message_manager._remove_last_state_message()
 			# self._message_manager.add_model_output(AgentModelOutput(action=action))
