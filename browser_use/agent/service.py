@@ -1004,8 +1004,8 @@ class Agent(Generic[Context]):
 			self.state.n_steps += 1
 
 			if self.register_new_step_callback:
+				state = await self.browser_context.get_state(cache_clickable_elements_hashes=False)
 				if inspect.iscoroutinefunction(self.register_new_step_callback):
-					state = await self.browser_context.get_state(cache_clickable_elements_hashes=True)
 					await self.register_new_step_callback(state, None, self.state.n_steps)
 				else:
 					self.register_new_step_callback(state, None, self.state.n_steps)
