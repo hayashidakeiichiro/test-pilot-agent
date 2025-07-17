@@ -1040,12 +1040,6 @@ class Agent(Generic[Context]):
 			if self.register_end_step_callback:
 
 				page = await self.browser_context.get_agent_current_page()
-				await page.evaluate('''
-					() => {
-						const overlays = document.querySelectorAll("#playwright-highlight-container");
-						overlays.forEach(el => el.remove());
-					}
-				''')
 				screenshot = await page.screenshot(
 					full_page=False,
 					animations='disabled',
