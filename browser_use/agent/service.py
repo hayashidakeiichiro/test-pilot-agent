@@ -1005,23 +1005,10 @@ class Agent(Generic[Context]):
 			self.state.n_steps += 1
 
 			if self.register_new_step_callback:
-				page = await self.browser_context.get_agent_current_page()
-				await page.evaluate('''
-					() => {
-						const overlays = document.querySelectorAll("#playwright-highlight-container");
-						overlays.forEach(el => el.remove());
-					}
-				''')
-				screenshot = await page.screenshot(
-					full_page=False,
-					animations='disabled',
-				)
-
-				screenshot_b64 = base64.b64encode(screenshot).decode('utf-8')
 				if inspect.iscoroutinefunction(self.register_new_step_callback):
-					await self.register_new_step_callback(state, None, self.state.n_steps, screenshot_b64)
+					await self.register_new_step_callback(state, None, self.state.n_steps)
 				else:
-					self.register_new_step_callback(state, None, self.state.n_steps, screenshot_b64)
+					self.register_new_step_callback(state, None, self.state.n_steps)
 
 			self._message_manager._remove_last_state_message()
 			# self._message_manager.add_model_output(AgentModelOutput(action=action))
@@ -1051,10 +1038,24 @@ class Agent(Generic[Context]):
 				action_result=result
 			)
 			if self.register_end_step_callback:
+
+				page = await self.browser_context.get_agent_current_page()
+				await page.evaluate('''
+					() => {
+						const overlays = document.querySelectorAll("#playwright-highlight-container");
+						overlays.forEach(el => el.remove());
+					}
+				''')
+				screenshot = await page.screenshot(
+					full_page=False,
+					animations='disabled',
+				)
+
+				screenshot_b64 = base64.b64encode(screenshot).decode('utf-8')
 				if inspect.iscoroutinefunction(self.register_end_step_callback):
-					await self.register_end_step_callback(state, model_output, self.state.n_steps)
+					await self.register_end_step_callback(state, model_output, self.state.n_steps, screenshot_b64)
 				else:
-					self.register_end_step_callback(state, model_output, self.state.n_steps)
+					self.register_end_step_callback(state, model_output, self.state.n_steps, screenshot_b64)
 
 		except InterruptedError:
 			self.state.last_result = [ActionResult(error='The agent was paused mid-step.', include_in_memory=False)]
