@@ -77,8 +77,8 @@ class LoggingCallbackHandler(BaseCallbackHandler):
         # スクショが含まれていたら保存
         for prompt in prompts:
             img_data = extract_base64_image(prompt)
-            if img_data:
-                save_image_from_base64(f"data:image/png;base64,{img_data}")
+            # if img_data:
+                # save_image_from_base64(f"data:image/png;base64,{img_data}")
 
     def on_llm_end(self, response, **kwargs):
         generations_serializable = []
@@ -96,8 +96,8 @@ class LoggingCallbackHandler(BaseCallbackHandler):
 
                 # スクショが含まれていたら保存
                 img_data = extract_base64_image(generation.message.content)
-                if img_data:
-                    save_image_from_base64(f"data:image/png;base64,{img_data}")
+                # if img_data:
+                #     save_image_from_base64(f"data:image/png;base64,{img_data}")
 
         with open(LLM_LOG_FILE, "a", encoding="utf-8") as log_file:
             log_file.write("=== LLM Response ===\n")
@@ -107,7 +107,8 @@ class LoggingCallbackHandler(BaseCallbackHandler):
 from browser_use.browser.context import BrowserContext, BrowserContextConfig
 async def main_task():
 
-    url = "https://www.w3schools.com/html/html5_draganddrop.asp"
+    # url = "https://www.w3schools.com/html/html5_draganddrop.asp"
+    url = "https://www.rakuten.co.jp/"
     # url = "https://zenn.dev"
     task_prompt = f"""
 
@@ -140,10 +141,50 @@ async def main_task():
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.1, callbacks=[LoggingCallbackHandler()])
     page_extraction_llm = ChatOpenAI(model="gpt-4o", temperature=0.1, callbacks=[LoggingCallbackHandler()])
 
-    async def callback(state, model_output, steps: int):
-        screenshot_base64=state.screenshot
-        save_image_from_base64(screenshot_base64)
-        print(model_output)
+    async def callback(state, model_output, steps: int, page):
+        extracted_content=model_output.action_result[0].extracted_content
+        xpath=json.loads(extracted_content).get("xpath","")
+
+        # 目立つオーバーレイを追加
+        await page.evaluate('''
+            (xpath) => {
+                // 既存のオーバーレイ削除
+                const overlays = document.querySelectorAll("#playwright-highlight-container");
+                overlays.forEach(el => el.remove());
+
+                // xpathから要素取得
+                const result = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+                const element = result.singleNodeValue;
+                if (!element) return;
+
+                const rect = element.getBoundingClientRect();
+
+                // オーバーレイdiv作成（赤い破線枠）
+                const overlay = document.createElement("div");
+                overlay.id = "playwright-highlight-container";
+                overlay.style.position = "absolute";
+                overlay.style.top = (rect.top + window.scrollY) + "px";
+                overlay.style.left = (rect.left + window.scrollX) + "px";
+                overlay.style.width = rect.width + "px";
+                overlay.style.height = rect.height + "px";
+                overlay.style.border = "4px dashed red";
+                overlay.style.backgroundColor = "transparent";  // ←背景は透明
+                overlay.style.zIndex = "9999";
+                overlay.style.pointerEvents = "none";
+                overlay.style.boxSizing = "border-box";
+
+                document.body.appendChild(overlay);
+            }
+        ''', xpath)
+
+
+        screenshot = await page.screenshot(
+            full_page=False,
+            animations='disabled',
+        )
+
+        screenshot_b64 = base64.b64encode(screenshot).decode('utf-8')
+        save_image_from_base64(screenshot_b64)
     agent = Agent(
         task=task_prompt,
         llm=llm,

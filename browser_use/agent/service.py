@@ -65,6 +65,7 @@ from browser_use.telemetry.views import (
 	AgentStepTelemetryEvent,
 )
 from browser_use.utils import check_env_variables, time_execution_async, time_execution_sync
+from patchright.async_api import Page
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -114,8 +115,8 @@ class Agent(Generic[Context]):
 			| None
 		) = None,
 		register_end_step_callback: (
-			Callable[['BrowserState', 'AgentOutput', int, str], None]  # Sync callback
-			| Callable[['BrowserState', 'AgentOutput', int, str], Awaitable[None]]  # Async callback
+			Callable[['BrowserState', 'AgentOutput', int, Page], None]  # Sync callback
+			| Callable[['BrowserState', 'AgentOutput', int, Page], Awaitable[None]]  # Async callback
 			| None
 		) = None,
 		register_done_callback: (
@@ -1038,18 +1039,11 @@ class Agent(Generic[Context]):
 				action_result=result
 			)
 			if self.register_end_step_callback:
-
 				page = await self.browser_context.get_agent_current_page()
-				screenshot = await page.screenshot(
-					full_page=False,
-					animations='disabled',
-				)
-
-				screenshot_b64 = base64.b64encode(screenshot).decode('utf-8')
 				if inspect.iscoroutinefunction(self.register_end_step_callback):
-					await self.register_end_step_callback(state, model_output, self.state.n_steps, screenshot_b64)
+					await self.register_end_step_callback(state, model_output, self.state.n_steps, page)
 				else:
-					self.register_end_step_callback(state, model_output, self.state.n_steps, screenshot_b64)
+					self.register_end_step_callback(state, model_output, self.state.n_steps, page)
 
 		except InterruptedError:
 			self.state.last_result = [ActionResult(error='The agent was paused mid-step.', include_in_memory=False)]

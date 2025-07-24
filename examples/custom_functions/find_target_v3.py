@@ -9,7 +9,8 @@ from browser_use.dom.views import DOMElementNode, DOMTextNode
 import re
 from playwright.async_api import Page
 from patchright.async_api import ElementHandle, Page
-import asyncio
+import json
+from browser_use import Controller, ActionResult
 class Position(BaseModel):
     x: float
     y: float
@@ -342,7 +343,6 @@ def attach_find_target_v3(controller):
         # 最良の候補を取得
         best_entry = candidates[0] if candidates else None
             
-        print(f"Best candidate score: ", candidates[0],best_entry["test_step"].type)
         if best_entry["test_step"].type == 'click':
             await click_element(best_entry['node'], browser)
         elif best_entry["test_step"].type == 'input':
@@ -351,125 +351,9 @@ def attach_find_target_v3(controller):
             await input_text(best_entry['node'], best_entry["test_step"].value, browser)
         elif best_entry["test_step"].type == 'select':
             await select_dropdown_option(best_entry['node'], best_entry["test_step"].value, browser)
-def attach_drag_and_drop(controller):
-    @controller.action("Find target element by context_block and target")
-    async def drag_drop_from_xpath(
-        test_step: dict,
-        browser: BrowserContext,
-        steps: int = 10,
-    ):
-        """
-        Perform a drag and drop using full RecordedAction dicts for dragstart and drop.
-        Expects keys: source_meta, target_meta, and optional offset
-        """
-        page = await browser.get_current_page()
+        label = best_entry['node'].get_all_text_till_next_clickable_element(include_attr_for_img=False) if best_entry['node'].get_all_text_till_next_clickable_element(include_attr_for_img=False) else f"<{best_entry['node'].tag_name}>"
+        extracted_content={"xpath": best_entry['node'].xpath, "log": f"Executed action: {best_entry['test_step'].type} on {label}"}
 
-        source_meta = test_step.get("source_meta")
-        target_meta = test_step.get("target_meta")
-        offset = test_step.get("offset")
-
-        if not source_meta or not target_meta:
-            return {"error": "Missing source or target metadata"}
-
-        def prepare_target_node(meta: dict) -> TestStep:
-            if "position" in meta and meta["position"] is not None:
-                pos = meta["position"]
-                if isinstance(pos, dict):
-                    meta["position"] = Position(**pos)
-                elif isinstance(pos, tuple):
-                    meta["position"] = Position(x=pos[0], y=pos[1], width=0, height=0)
-            return TestStep(**meta)
-
-        source_step = prepare_target_node(source_meta)
-        target_step = prepare_target_node(target_meta)
-
-        dom_service = DomService(page)
-        content = await dom_service.get_clickable_elements(
-            focus_element=-1,
-            viewport_expansion=0,
-            highlight_elements=False,
+        return ActionResult(
+            extracted_content=json.dumps(extracted_content),
         )
-        html_tree = content.element_tree
-
-        async def get_position_from_xpath(xpath: str) -> tuple[int, int] | None:
-            result = await page.evaluate('''
-                (xpath) => {
-                    const el = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-                    if (!el) return null;
-                    const rect = el.getBoundingClientRect();
-                    return {
-                        x: rect.left + window.scrollX + rect.width / 2,
-                        y: rect.top + window.scrollY + rect.height / 2
-                    };
-                }
-            ''', xpath)
-            return (int(result['x']), int(result['y'])) if result else None
-
-        async def find_best_match(target_step: TestStep):
-            candidates = []
-
-            async def traverse(node):
-                if isinstance(node, DOMElementNode) and node.is_visible:
-                    position = await get_position_from_xpath(node.xpath)
-                    candidate_step = TestStep(
-                        type=target_step.type,
-                        selector=node.tag_name,
-                        childrenSummary=[],
-                        xpath=node.xpath,
-                        value=target_step.value or '',
-                        innerText=' '.join(c.text for c in node.children if isinstance(c, DOMTextNode)),
-                        attributes=node.attributes,
-                        timestamp=0,
-                        href='',
-                        position=Position(x=position[0], y=position[1], width=0, height=0) if position else None,
-                        isButton=node.is_interactive,
-                        siblingTexts=[
-                            c.text for c in node.parent.children if isinstance(c, DOMTextNode) and c != node
-                        ] if node.parent else [],
-                    )
-                    candidate_step.set_children_summary_from_dom(node)
-                    score = similarity_score(target_step, candidate_step)
-                    candidates.append({'score': score, 'xpath': node.xpath})
-
-                for child in node.children:
-                    if isinstance(child, DOMElementNode):
-                        await traverse(child)
-
-            await traverse(html_tree)
-            candidates.sort(key=lambda x: x['score'], reverse=True)
-            return candidates[0]['xpath'] if candidates else None
-
-        source_xpath = await find_best_match(source_step)
-        target_xpath = await find_best_match(target_step)
-
-        if not source_xpath or not target_xpath:
-            return {"error": "Failed to locate source or target element by XPath"}
-
-        source_pos = await get_position_from_xpath(source_xpath)
-        target_pos = await get_position_from_xpath(target_xpath)
-
-        if not source_pos or not target_pos:
-            return {"error": "Could not resolve source or target coordinates"}
-
-        if offset:
-            if isinstance(offset, tuple):
-                offset = {"x": offset[0], "y": offset[1]}
-            target_pos = (target_pos[0] + offset["x"], target_pos[1] + offset["y"])
-
-        try:
-            print(f"Dragging from {source_xpath} at {source_pos} to {target_xpath} at {target_pos}")
-            await scroll_to_element_by_xpath(page, source_xpath)
-            await page.mouse.move(*source_pos)
-            await page.mouse.down()
-
-            for i in range(1, steps + 1):
-                intermediate_x = int(source_pos[0] + (target_pos[0] - source_pos[0]) * i / steps)
-                intermediate_y = int(source_pos[1] + (target_pos[1] - source_pos[1]) * i / steps)
-                await page.mouse.move(intermediate_x, intermediate_y)
-
-            await page.mouse.move(*target_pos)
-            await page.mouse.move(*target_pos)
-            await page.mouse.up()
-
-        except Exception as e:
-            return {"error": f"Drag operation failed: {str(e)}"}
