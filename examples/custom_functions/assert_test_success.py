@@ -2,31 +2,14 @@ from browser_use import Controller, ActionResult
 from browser_use.browser.context import BrowserContext
 from browser_use.dom.views import DOMBaseNode, DOMElementNode, DOMTextNode
 from browser_use.dom.service import DomService
-from Levenshtein import distance
-from typing import List, Tuple, Optional
 import asyncio
-import datetime
 import json
-import os
-import base64
-import io
-from dotenv import load_dotenv
-from PIL import Image
-from langchain.callbacks.base import BaseCallbackHandler
-from langchain_openai import ChatOpenAI
-from browser_use import ActionResult, Agent, Browser, BrowserConfig, Controller
+from browser_use import ActionResult, Controller
 from langchain_core.language_models.chat_models import BaseChatModel
 import re
-import functools
 from langchain_core.prompts import PromptTemplate
 import logging
-from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_core.messages.base import BaseMessage, BaseMessageChunk
-from itertools import islice
-from PIL import Image
-from examples.custom_functions.generate_icon_list_image import generate_selector_thumbnail_grid_base64
-from examples.custom_functions.generate_icon_list_image import generate_selector_thumbnail_grid_base64, extract_none_text_selector_map
-
+from langchain_core.messages import HumanMessage
 
 logger = logging.getLogger(__name__)
 
@@ -139,6 +122,7 @@ async def assert_result_on_screen(
 ) -> ActionResult:
     page = await browser.get_agent_current_page()
     dom_service = DomService(page)
+    reason = ""
 
     for attempt in range(max_attempts):     
         visible_content = await dom_service.get_clickable_elements(
@@ -170,9 +154,11 @@ async def assert_result_on_screen(
             reason = result.get("reason", "")
 
             if status == "success":
-                return ActionResult(extracted_content=f"✅ Test success indicator found: {reason}", success=True, is_done=True)
+                output_dict = {"success": True, "reason": reason}
+                return ActionResult(extracted_content=json.dumps(output_dict), success=True, is_done=True)
             elif status == "failure":
-                return ActionResult(extracted_content=f"❌ Test failure indicator found: {reason}", success=False, is_done=True)
+                output_dict = {"success": False, "reason": reason}
+                return ActionResult(extracted_content=json.dumps(output_dict), success=False, is_done=True)
 
             # status == "uncertain" → scroll if LLM suggests
             if scroll == "bottom":
@@ -189,8 +175,8 @@ async def assert_result_on_screen(
             logger.warning(f"LLM response error or parsing failure: {e}")
 
     # max_attemptsまで試しても success にならなかった
-    return ActionResult(extracted_content=f"❌ Test result not confirmed after scrolling: {reason}", success=False, is_done=True)
-
+    output_dict = {"success": False, "reason": reason}
+    return ActionResult(extracted_content=json.dumps(output_dict), success=False, is_done=True)
 
 def attach_assert_test_success(controller: Controller):
     @controller.action("assert test success")

@@ -418,15 +418,26 @@ def attach_run_instruction_based_test(controller: Controller):
         page_extraction_llm: BaseChatModel,
         action: str
     ):
-        current_page = await browser.get_agent_current_page()
         actions_str = controller.registry.get_prompt_description()
         selected_action = await find_elements_by_hint(browser = browser, llm = page_extraction_llm, hint = action, actions_str = actions_str)
         print(f'selected_action: {selected_action}')
         if selected_action is None:
-            msg = f'❌ No element found for hint: {action}'
-            logger.info(msg)
-            return ActionResult(extracted_content=msg)
-        return ActionResult(
-            extracted_content=f'next_action:{json.dumps(selected_action)}'
-        )
+            extracted_content = {"xpath": None, "log": f""}
+            return ActionResult(extracted_content=json.dumps(extracted_content))
+        xpath = None
+        for key, value in selected_action.items():
+            if 'index' in value and value['index'] is not None:
+                page = await browser.get_agent_current_page()
+                dom_service = DomService(page)
 
+                # ページからクリック可能要素を取得
+                content = await dom_service.get_clickable_elements()
+                selector_map = content.selector_map
+                index = value['index']
+                node = selector_map[index]
+                xpath = node.xpath
+        
+        extracted_content = {"next_action": selected_action, "xpath": xpath, "log": f""}
+        return ActionResult(
+            extracted_content=json.dumps(extracted_content),
+        )

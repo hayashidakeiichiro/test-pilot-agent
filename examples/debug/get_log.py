@@ -108,8 +108,8 @@ from browser_use.browser.context import BrowserContext, BrowserContextConfig
 async def main_task():
 
     # url = "https://www.w3schools.com/html/html5_draganddrop.asp"
-    url = "https://www.rakuten.co.jp/"
-    # url = "https://zenn.dev"
+    # url = "https://www.rakuten.co.jp/"
+    url = "https://zenn.dev"
     task_prompt = f"""
 
     以下のjsonをもとに、find_target_v2で要素を特定し、アクション実行してください
@@ -143,39 +143,43 @@ async def main_task():
 
     async def callback(state, model_output, steps: int, page):
         extracted_content=model_output.action_result[0].extracted_content
-        xpath=json.loads(extracted_content).get("xpath","")
-
-        # 目立つオーバーレイを追加
+        try:
+            xpath=json.loads(extracted_content).get("xpath","")
+        except:
+            xpath = None
         await page.evaluate('''
-            (xpath) => {
-                // 既存のオーバーレイ削除
-                const overlays = document.querySelectorAll("#playwright-highlight-container");
-                overlays.forEach(el => el.remove());
+            // 既存のオーバーレイ削除
+            const overlays = document.querySelectorAll("#playwright-highlight-container");
+            overlays.forEach(el => el.remove());
+        ''')
+        # 目立つオーバーレイを追加
+        if(xpath):
+            await page.evaluate('''
+                (xpath) => {
+                    // xpathから要素取得
+                    const result = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+                    const element = result.singleNodeValue;
+                    if (!element) return;
 
-                // xpathから要素取得
-                const result = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
-                const element = result.singleNodeValue;
-                if (!element) return;
+                    const rect = element.getBoundingClientRect();
 
-                const rect = element.getBoundingClientRect();
+                    // オーバーレイdiv作成（赤い破線枠）
+                    const overlay = document.createElement("div");
+                    overlay.id = "playwright-highlight-container";
+                    overlay.style.position = "absolute";
+                    overlay.style.top = (rect.top + window.scrollY) + "px";
+                    overlay.style.left = (rect.left + window.scrollX) + "px";
+                    overlay.style.width = rect.width + "px";
+                    overlay.style.height = rect.height + "px";
+                    overlay.style.border = "4px dashed red";
+                    overlay.style.backgroundColor = "transparent";  // ←背景は透明
+                    overlay.style.zIndex = "9999";
+                    overlay.style.pointerEvents = "none";
+                    overlay.style.boxSizing = "border-box";
 
-                // オーバーレイdiv作成（赤い破線枠）
-                const overlay = document.createElement("div");
-                overlay.id = "playwright-highlight-container";
-                overlay.style.position = "absolute";
-                overlay.style.top = (rect.top + window.scrollY) + "px";
-                overlay.style.left = (rect.left + window.scrollX) + "px";
-                overlay.style.width = rect.width + "px";
-                overlay.style.height = rect.height + "px";
-                overlay.style.border = "4px dashed red";
-                overlay.style.backgroundColor = "transparent";  // ←背景は透明
-                overlay.style.zIndex = "9999";
-                overlay.style.pointerEvents = "none";
-                overlay.style.boxSizing = "border-box";
-
-                document.body.appendChild(overlay);
-            }
-        ''', xpath)
+                    document.body.appendChild(overlay);
+                }
+            ''', xpath)
 
 
         screenshot = await page.screenshot(

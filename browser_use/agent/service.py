@@ -1016,15 +1016,12 @@ class Agent(Generic[Context]):
 
 			result = await self.multi_act(action)
 			self.state.last_result = result
-			if (result[0].extracted_content is not None and result[0].extracted_content.startswith('next_action:')):
-				next_action = result[0].extracted_content.split('next_action:')[1].strip()
-				next_action = json.loads(next_action)
-				next_action = self._convert_initial_actions([next_action])
-				result = await self.multi_act(next_action)
 
-			if result and result[-1].is_done:
-				logger.info(f'📄 Result: {result[-1].extracted_content}')
-
+			extracted_content = result[0].extracted_content
+			try:
+				next_action = json.loads(extracted_content).get("next_action", None)
+			except:
+				next_action = None
 			self.state.consecutive_failures = 0
 			brain = AgentBrain(
 				evaluation_previous_goal="",
@@ -1044,6 +1041,14 @@ class Agent(Generic[Context]):
 					await self.register_end_step_callback(state, model_output, self.state.n_steps, page)
 				else:
 					self.register_end_step_callback(state, model_output, self.state.n_steps, page)
+					
+			if next_action:
+				next_action = self._convert_initial_actions([next_action])
+				await self.multi_act(next_action)
+
+			if result and result[-1].is_done:
+				logger.info(f'📄 Result: {result[-1].extracted_content}')
+
 
 		except InterruptedError:
 			self.state.last_result = [ActionResult(error='The agent was paused mid-step.', include_in_memory=False)]
