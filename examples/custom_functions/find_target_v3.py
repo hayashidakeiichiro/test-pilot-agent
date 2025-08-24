@@ -11,6 +11,9 @@ from playwright.async_api import Page
 from patchright.async_api import ElementHandle, Page
 import json
 from browser_use import Controller, ActionResult
+import pickle
+import base64
+import asyncio
 class Position(BaseModel):
     x: float
     y: float
@@ -144,126 +147,23 @@ def similarity_score(target: TestStep, candidate: TestStep) -> float:
 
     return score / weight_total if weight_total > 0 else 0
 
-async def click_element(element_node: DOMElementNode, browser: BrowserContext):
-    session = await browser.get_session()
-    initial_pages = len(session.context.pages)
-    page = await browser.get_agent_current_page()
 
-    # if element has file uploader then dont click
-    if await browser.is_file_uploader(element_node):
-        return False
-
-    try:
-        await scroll_to_element_by_xpath(page, element_node.xpath)
-        await browser._click_element_node(element_node)
-        if len(session.context.pages) > initial_pages:
-            await browser.switch_to_tab(-1)
-        return True
-    except Exception as e:
-        return False
-async def input_text(element_node: DOMElementNode, text: str, browser: BrowserContext):
-    page = await browser.get_agent_current_page()
-    await scroll_to_element_by_xpath(page, element_node.xpath)
-    await browser._input_text_element_node(element_node, text)
-    return True
-async def select_dropdown_option(
-    dom_element: DOMElementNode,
-    text: str,
-    browser: BrowserContext,
-) -> bool:
-    """Select dropdown option by the text of the option you want to select"""
-    page = await browser.get_current_page()
-
-    # Validate that we're working with a select element
-    if dom_element.tag_name != 'select':
-        return False
-
-    try:
-        await scroll_to_element_by_xpath(page, dom_element.xpath)
-        frame_index = 0
-        for frame in page.frames:
-            try:
-
-                # First verify we can find the dropdown in this frame
-                find_dropdown_js = """
-                    (xpath) => {
-                        try {
-                            const select = document.evaluate(xpath, document, null,
-                                XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-                            if (!select) return null;
-                            if (select.tagName.toLowerCase() !== 'select') {
-                                return {
-                                    error: `Found element but it's a ${select.tagName}, not a SELECT`,
-                                    found: false
-                                };
-                            }
-                            return {
-                                id: select.id,
-                                name: select.name,
-                                found: true,
-                                tagName: select.tagName,
-                                optionCount: select.options.length,
-                                currentValue: select.value,
-                                availableOptions: Array.from(select.options).map(o => o.text.trim())
-                            };
-                        } catch (e) {
-                            return {error: e.toString(), found: false};
-                        }
-                    }
-                """
-
-                dropdown_info = await frame.evaluate(find_dropdown_js, dom_element.xpath)
-
-                if dropdown_info:
-                    if not dropdown_info.get('found'):
-                        continue
-                    await frame.locator('//' + dom_element.xpath).nth(0).select_option(label=text, timeout=1000)
-                    
-                    return True
-
-            except Exception as frame_e:
-                return False
-
-            frame_index += 1
-
-        return False
-
-    except Exception as e:
-        return False
-
-async def scroll_to_element_by_xpath(page: Page, xpath: str) -> None:
+async def scroll_to_element(page: Page, el) -> None:
     found = await page.evaluate(
-        """(xpath) => {
-            const result = document.evaluate(
-                xpath,
-                document,
-                null,
-                XPathResult.FIRST_ORDERED_NODE_TYPE,
-                null
-            );
-            const el = result.singleNodeValue;
-            if (!el) return false;
-
-            const rect = el.getBoundingClientRect();
-            const inViewport = (
-                rect.top >= 0 &&
-                rect.left >= 0 &&
-                rect.bottom <= (window.innerHeight || document.documentElement.clientHeight) &&
-                rect.right <= (window.innerWidth || document.documentElement.clientWidth)
-            );
-
-            if (!inViewport) {
-                el.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'center' });
-            }
-
-            return true;
+        """(el) => {
+            el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
         }""",
-        xpath
+        el
     )
+    await asyncio.sleep(3)
 
-    if not found:
-        raise Exception(f"Element not found for XPath: {xpath}")
-
+async def scroll_to_y_position(page, y: float) -> None:
+    await page.evaluate(
+        """(y) => {
+            window.scrollTo({ top: y, behavior: 'smooth' });
+        }""",
+        y
+    )
     
 def attach_find_target_v3(controller):
     @controller.action("Find target element by context_block and target")
@@ -272,11 +172,13 @@ def attach_find_target_v3(controller):
             raise ValueError("No test steps provided")
 
         target_item = test_steps_json["action"]
+        page = await browser.get_agent_current_page()
         if "position" in target_item and target_item["position"] is not None:
             target_item["position"] = Position(**target_item["position"])
-        target_step = TestStep(**target_item)
-
+            await scroll_to_y_position(page, target_item["position"].y)
+            await asyncio.sleep(3)
         page = await browser.get_agent_current_page()
+        target_step = TestStep(**target_item)
         dom_service = DomService(page)
         content = await dom_service.get_clickable_elements(
             focus_element=-1,
@@ -304,7 +206,9 @@ def attach_find_target_v3(controller):
             return Position(**result) if result else None
 
         async def traverse(node):
-            if isinstance(node, DOMElementNode):
+            if isinstance(node, DOMElementNode) and node.tag_name.lower() == "iframe":
+                return
+            if isinstance(node, DOMElementNode) and not node.shadow_root:
                 if node.is_visible:
                     position = await get_element_position(node.xpath)
                     candidate_data = TestStep(
@@ -327,11 +231,19 @@ def attach_find_target_v3(controller):
                     )
                     candidate_data.set_children_summary_from_dom(node)
                     sim_score = similarity_score(target_step, candidate_data)
-                    candidates.append({
-                        'score': sim_score,
-                        'node': node,
-                        'test_step': candidate_data
-                    })
+                    if (target_item.get('type', 'none')=="input"):
+                        if (node.tag_name=="input" or node.tag_name=="textarea"):
+                            candidates.append({
+                                'score': sim_score,
+                                'node': node,
+                                'test_step': candidate_data
+                            })
+                    else:
+                        candidates.append({
+                            'score': sim_score,
+                            'node': node,
+                            'test_step': candidate_data
+                        })
                 for child in node.children:
                     await traverse(child)
 
@@ -342,17 +254,24 @@ def attach_find_target_v3(controller):
 
         # 最良の候補を取得
         best_entry = candidates[0] if candidates else None
-            
-        if best_entry["test_step"].type == 'click':
-            await click_element(best_entry['node'], browser)
-        elif best_entry["test_step"].type == 'input':
-            if not best_entry["test_step"].value:
-                raise ValueError("No value provided for input action")
-            await input_text(best_entry['node'], best_entry["test_step"].value, browser)
-        elif best_entry["test_step"].type == 'select':
-            await select_dropdown_option(best_entry['node'], best_entry["test_step"].value, browser)
-        label = best_entry['node'].get_all_text_till_next_clickable_element(include_attr_for_img=False) if best_entry['node'].get_all_text_till_next_clickable_element(include_attr_for_img=False) else f"<{best_entry['node'].tag_name}>"
-        extracted_content={"xpath": best_entry['node'].xpath, "log": f"Executed action: {best_entry['test_step'].type} on {label}"}
+        node_str = base64.b64encode(pickle.dumps(best_entry["node"])).decode("utf-8")
+        next_action = {
+            "act_recorded_action": {
+                "action_json": {
+                    "node": node_str, 
+                    "action_type": best_entry["test_step"].type,
+                    "value": best_entry["test_step"].value
+                }
+            }
+        }
+        node = best_entry["node"]
+        element_handle = await browser.get_locate_element(node)
+        print(best_entry["node"].xpath)
+        print(best_entry["node"])
+        print(element_handle)
+
+        await scroll_to_element(page, element_handle)
+        extracted_content={ "next_action": next_action, "log": "", "xpath": best_entry["node"].xpath}
 
         return ActionResult(
             extracted_content=json.dumps(extracted_content),

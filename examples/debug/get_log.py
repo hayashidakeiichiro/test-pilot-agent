@@ -12,6 +12,7 @@ from browser_use import ActionResult, Agent, Browser, BrowserConfig, Controller
 from examples.custom_functions.find_target_v3 import attach_find_target_v3
 from examples.custom_functions.run_instruction_based_test import attach_run_instruction_based_test
 from examples.custom_functions.assert_test_success import attach_assert_test_success
+from examples.custom_functions.act_recorded_action import attach_act_recorded_action
 
 
 load_dotenv()
@@ -109,7 +110,7 @@ async def main_task():
 
     # url = "https://www.w3schools.com/html/html5_draganddrop.asp"
     # url = "https://www.rakuten.co.jp/"
-    url = "https://zenn.dev"
+    url = "https://qiita.com"
     task_prompt = f"""
 
     以下のjsonをもとに、find_target_v2で要素を特定し、アクション実行してください
@@ -131,12 +132,9 @@ async def main_task():
     attach_find_target_v3(controller)
     attach_run_instruction_based_test(controller)
     attach_assert_test_success(controller)
+    attach_act_recorded_action(controller)
     # attach_generate_icon_list_image(controller)
     # attach_generate_site_summary_v3(controller)
-    browser = Browser(config=BrowserConfig(headless=True))
-    browser_context = BrowserContext(config=BrowserContextConfig(
-        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36"
-     ), browser=browser)
 
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.1, callbacks=[LoggingCallbackHandler()])
     page_extraction_llm = ChatOpenAI(model="gpt-4o", temperature=0.1, callbacks=[LoggingCallbackHandler()])
@@ -189,6 +187,26 @@ async def main_task():
 
         screenshot_b64 = base64.b64encode(screenshot).decode('utf-8')
         save_image_from_base64(screenshot_b64)
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    file_path = os.path.join(current_dir, "steps.json")
+
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            json_data = json.load(f)
+
+        test_steps_json_list = json_data.get("actions", [])
+        meta_data = json_data.get("metaData", {})
+        viewport = meta_data.get("viewport", {"width": 1200, "height": 800})
+        
+    except (OSError, json.JSONDecodeError) as e:
+        print(f"Error reading JSON file: {e}")
+
+    browser = Browser(config=BrowserConfig(headless=True))
+    browser_context = BrowserContext(config=BrowserContextConfig(
+        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36",
+        window_width=viewport["width"], 
+        window_height=viewport["height"],
+     ), browser=browser)
     agent = Agent(
         task=task_prompt,
         llm=llm,
@@ -198,16 +216,6 @@ async def main_task():
         initial_actions=[{'open_tab': {'url': url}}],
         register_end_step_callback=callback
     )
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    file_path = os.path.join(current_dir, "steps.json")
-
-    try:
-        with open(file_path, "r", encoding="utf-8") as f:
-            json_data = json.load(f)
-
-        test_steps_json_list = json_data
-    except (OSError, json.JSONDecodeError) as e:
-        print(f"Error reading JSON file: {e}")
     
     actions = []
     i = 0
@@ -236,7 +244,6 @@ async def main_task():
     })
 
     result = await agent.run_actions(actions=actions)
-    print(result)
 
 
 
