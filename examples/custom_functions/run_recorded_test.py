@@ -1,19 +1,18 @@
+from argparse import Action
+import asyncio
+import json
 import math
 from rapidfuzz import fuzz
-from typing import Optional, Dict, Any, List
-from pydantic import BaseModel, ValidationError
+from typing import Optional, Dict, List
+from pydantic import BaseModel
 from browser_use.dom.service import DomService
-from browser_use import Controller
 from browser_use.browser.context import BrowserContext
 from browser_use.dom.views import DOMElementNode, DOMTextNode
-import re
-from playwright.async_api import Page
-from patchright.async_api import ElementHandle, Page
-import json
 from browser_use import Controller, ActionResult
+import re
 import pickle
 import base64
-import asyncio
+
 class Position(BaseModel):
     x: float
     y: float
@@ -110,7 +109,7 @@ def similarity_score(target: TestStep, candidate: TestStep) -> float:
         add_score(fuzz.token_set_ratio(target.attributes.get('alt'), candidate.attributes.get('alt')) / 100, low_weight)
 
     if target.xpath and candidate.xpath:
-        add_score(normalized_xpath_levenshtein(target.xpath, candidate.xpath), high_weight)
+        add_score(normalized_xpath_levenshtein(target.xpath, candidate.xpath), low_weight)
 
     if target.innerText and candidate.innerText:
         add_score(fuzz.token_set_ratio(clean_text(target.innerText), clean_text(candidate.innerText)) / 100, high_weight)
@@ -133,7 +132,7 @@ def similarity_score(target: TestStep, candidate: TestStep) -> float:
     if target.position and candidate.position:
         dist = euclidean_distance(target.position, candidate.position)
         pos_sim = max(0, 1 - dist / 100)
-        add_score(pos_sim, high_weight)
+        add_score(pos_sim, low_weight)
 
         target_area = area(target.position.width, target.position.height)
         candidate_area = area(candidate.position.width, candidate.position.height)
@@ -147,8 +146,7 @@ def similarity_score(target: TestStep, candidate: TestStep) -> float:
 
     return score / weight_total if weight_total > 0 else 0
 
-
-async def scroll_to_element(page: Page, el) -> None:
+async def scroll_to_element(page, el) -> None:
     found = await page.evaluate(
         """(el) => {
             el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
@@ -164,10 +162,11 @@ async def scroll_to_y_position(page, y: float) -> None:
         }""",
         y
     )
+
     
-def attach_find_target_v3(controller):
-    @controller.action("Find target element by context_block and target")
-    async def find_target(browser: BrowserContext, test_steps_json: Dict):
+def attach_run_recorded_test(controller):
+    @controller.action("run_recorded_test")
+    async def run_recorded_test(browser: BrowserContext, test_steps_json: Dict):
         if not test_steps_json:
             raise ValueError("No test steps provided")
 
@@ -266,9 +265,6 @@ def attach_find_target_v3(controller):
         }
         node = best_entry["node"]
         element_handle = await browser.get_locate_element(node)
-        print(best_entry["node"].xpath)
-        print(best_entry["node"])
-        print(element_handle)
 
         await scroll_to_element(page, element_handle)
         extracted_content={ "next_action": next_action, "log": "", "xpath": best_entry["node"].xpath}

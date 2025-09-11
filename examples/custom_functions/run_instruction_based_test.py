@@ -151,143 +151,137 @@ def build_element_prompt(target: str, context_block: str, hint: str, candidates:
         hint=hint or "",
         candidates=candidates
     )
-def build_select_candidates_prompt(target: str, context_block: str, hint: str, candidates: str) -> str:
-    # prompt = '画像のサイトにはクリックできる要素に枠線と番号のラベルが追加されています。確認できるラベルの番号とその要素に書いてある文字を列挙して'
-    prompt = '''
-        You are given a list of clickable candidate elements from a web page. Each element has the following metadata:
-        - `text`: visible label text
-        - `tag`: HTML tag (e.g., a, button)
-        - `xpath`: XPath indicating its position in the DOM
 
-        Your task is to identify the **most relevant interactive element** based on the user's instruction.
+async def get_scroll_remaining(page):
+    """
+    ページのスクロール状況を取得して残り量を返す。
+    返り値:
+      {
+        "y": 現在のscrollTop,
+        "ih": ビューポート高さ,
+        "sh": ドキュメント全体の高さ,
+        "remainDown": 下端までの残りピクセル,
+        "remainUp": 上端までの距離,
+        "bottomY": 最下部へ移動する際の目標scrollTop
+      }
+    """
+    return await page.evaluate("""() => {
+      const el = document.scrollingElement || document.documentElement || document.body;
+      const y  = el.scrollTop | 0;
+      const ih = window.innerHeight | 0;
+      const sh = el.scrollHeight | 0;
+      const remainDown = Math.max(0, sh - (y + ih));
+      const remainUp   = y;
+      const bottomY    = Math.max(0, sh - ih);
+      return { y, ih, sh, remainDown, remainUp, bottomY };
+    }""")
 
-        ---
+from langchain.prompts import PromptTemplate
 
-        ## User Instruction:
-
-        - Target label (exact match): "{target}"
-        - Context block: "{context_block}"
-        - Header hint: "{hint}"
-
-        ---
-
-        ## Candidate Elements:
-        {candidates}
-
-        ---
-
-        ## Instructions:
-
-        1. If `target` is provided and matches exactly with the `text` of an element, return **that element’s XPath** and explain why.
-        2. If `target` is empty or ambiguous:
-            - Use `context_block` and `hint` to locate the relevant **section** (e.g., a heading or container representing a subsection of the page).
-            - Return the XPath of the **section title element** (typically `header` or `h-` like `h1`,`h2` tag) that best matches the context.
-        3. Do not make guesses. If no suitable element or section can be confidently identified, return `null` with a clear reason.
-
-        ---
-
-        Respond in this exact JSON format:
-
-        {{
-            "selected_xpath": "<XPath of the selected element>" | null,
-            "reason": "<short explanation of why this element was selected, or why nothing could be selected>"
-            "match_type": "target" | "section" | "none"
-        }}
-        ＊Respond with a **pure JSON object only**, without any markdown formatting such as ```json or ``` blocks. Do not add any explanations, comments, or additional text—only return the JSON itself.
-        ---
-        '''
-    return PromptTemplate(
-        input_variables=['target', 'context_block', 'hint', 'candidates'],
-        template=prompt
-    ).format(
-        target=target,
-        context_block=context_block,
-        hint=hint or "",
-        candidates="\n\n".join([
-                f"\n  text: {node.get_all_text_till_next_clickable_element()}"
-                f"\n  tag: {node.tag_name}"
-                f"\n  score: {score:.3f}"
-                f"\n  xpath: {node.xpath}"
-                for i, (score, node) in enumerate(candidates)
-            ])
-        ) 
-def build_select_candidates_by_hint(hint: str, candidates_str: str, actions_str: str) -> str:
-    prompt = '''
+def build_select_candidates_by_hint(
+    hint: str,
+    candidates_str: str,
+    actions_str: str,
+    page_scroll_ctx_str: str,  # ← {"y","ih","sh","remainDown","remainUp"} を文字列で渡す
+) -> str:
+    prompt = """
     You are shown a screenshot of a web page and a user's instruction.
 
-    Your task is to determine whether the element the user is looking for is **visually present in the screenshot**.
+    Your task:
+    1) Decide if the target element seems **visually present** now.
+    2) If not confident, **recommend a scroll direction** using the page scroll context.
 
     ---
 
-    ## User Hint:
+    ## User Hint
     "{hint}"
 
-    ## Screenshot:
+    ## Page Scroll Context (JSON)
+    {page_scroll_ctx}
+
+    # Keys:
+    # y: current scrollTop (px from top)
+    # ih: viewport height
+    # sh: document scrollHeight
+    # remainDown = max(0, sh - (y + ih))
+    # remainUp   = y
+
+    ## Screenshot
     (See image)
 
     ---
 
-    ### Instructions:
+    ### Instructions
 
-    1. Carefully analyze the screenshot.
-    2. Try to find any visual element or section that appears to match the user's hint.
-    3. ⚠️ If you are **not confident** that the element is present in the image, respond "not_found".
-    4. If you see a clearly matching element, respond "found".
-    5. Also, choose and return the most appropriate action to take next.
-
+    1. Analyze the screenshot carefully.
+    2. If a clearly matching element is visible, set "find": true and choose the best **action** (e.g., click_element_by_index). Set "scroll": null.
+    3. If you are **not confident** it is present:
+    - Set "find": false.
+    - Choose a **scroll direction** using the Page Scroll Context:
+        - If remainDown > ih*0.2 → "down"
+        - If 0 < remainDown ≤ ih*0.2 → "bottom"
+        - If remainDown ≤ 0 and remainUp > 0 → "up"
+        - If remainUp ≤ 0 → "down" (at top)
+    - Also pick a concrete scroll action:
+        - "down"/"up": use "scroll_down"/"scroll_up" with amount ≈ round(min(0.9*ih, remainDown or remainUp))
+        - "bottom": use "scroll_down" with amount = remainDown
+        - "top": (rare) use "scroll_up" with amount = remainUp
+    4. Return JSON ONLY.
 
     ---
 
-    ### Actions:
+    ### Available Actions
     {actions_str}
+
     ---
 
-    Respond in this exact JSON format:
+    ### Response format (JSON ONLY)
 
     {{
-        "find": true | false,
-        "action": {{
-            go_to_url: {{url: {{type: string}}}} |
-            go_back: {{}} |
-            wait: {{seconds: {{default: 3, type: integer}}}} |
-            click_element_by_index: {{index: {{type: integer}}, xpath: {{anyOf: [{{type: string}}, {{type: null}}], default: null}}}} |
-            input_text: {{index: {{type: integer}}, text: {{type: string}}, xpath: {{anyOf: [{{type: string}}, {{type: null}}], default: null}}}} |
-            switch_tab: {{page_id: {{type: integer}}}} |
-            open_tab: {{url: {{type: string}}}} |
-            close_tab: {{page_id: {{type: integer}}}} |
-            extract_content: {{goal: {{type: string}}, should_strip_link_urls: {{type: boolean}}}} |
-            scroll_down: {{amount: {{anyOf: [{{type: integer}}, {{type: null}}], default: null}}}} |
-            scroll_up: {{amount: {{anyOf: [{{type: integer}}, {{type: null}}], default: null}}}} |
-            send_keys: {{keys: {{type: string}}}} |
-            scroll_to_text: {{text: {{type: string}}}} |
-            get_dropdown_options: {{index: {{type: integer}}}} |
-            select_dropdown_option: {{index: {{type: integer}}, text: {{type: string}}}} |
-            drag_drop: {{
-                element_source: {{anyOf: [{{type: string}}, {{type: null}}], default: null}},
-                element_target: {{anyOf: [{{type: string}}, {{type: null}}], default: null}},
-                element_source_offset: {{anyOf: [{{type: object}}, {{type: null}}], default: null}},
-                element_target_offset: {{anyOf: [{{type: object}}, {{type: null}}], default: null}},
-                coord_source_x: {{anyOf: [{{type: integer}}, {{type: null}}], default: null}},
-                coord_source_y: {{anyOf: [{{type: integer}}, {{type: null}}], default: null}},
-                coord_target_x: {{anyOf: [{{type: integer}}, {{type: null}}], default: null}},
-                coord_target_y: {{anyOf: [{{type: integer}}, {{type: null}}], default: null}},
-                steps: {{anyOf: [{{type: integer}}, {{type: null}}], default: 10}},
-                delay_ms: {{anyOf: [{{type: integer}}, {{type: null}}], default: 5}}
-            }}
+    "find": true | false,
+    "scroll": "down" | "up" | "top" | "bottom" | null,
+    "action": {{
+        go_to_url: {{url: {{type: string}}}} |
+        go_back: {{}} |
+        wait: {{seconds: {{default: 3, type: integer}}}} |
+        click_element_by_index: {{index: {{type: integer}}, xpath: {{anyOf: [{{type: string}}, {{type: null}}], default: null}}}} |
+        input_text: {{index: {{type: integer}}, text: {{type: string}}, xpath: {{anyOf: [{{type: string}}, {{type: null}}], default: null}}}} |
+        switch_tab: {{page_id: {{type: integer}}}} |
+        open_tab: {{url: {{type: string}}}} |
+        close_tab: {{page_id: {{type: integer}}}} |
+        extract_content: {{goal: {{type: string}}, should_strip_link_urls: {{type: boolean}}}} |
+        scroll_down: {{amount: {{anyOf: [{{type: integer}}, {{type: null}}], default: null}}}} |
+        scroll_up: {{amount: {{anyOf: [{{type: integer}}, {{type: null}}], default: null}}}} |
+        send_keys: {{keys: {{type: string}}}} |
+        scroll_to_text: {{text: {{type: string}}}} |
+        get_dropdown_options: {{index: {{type: integer}}}} |
+        select_dropdown_option: {{index: {{type: integer}}, text: {{type: string}}}} |
+        drag_drop: {{
+            element_source: {{anyOf: [{{type: string}}, {{type: null}}], default: null}},
+            element_target: {{anyOf: [{{type: string}}, {{type: null}}], default: null}},
+            element_source_offset: {{anyOf: [{{type: object}}, {{type: null}}], default: null}},
+            element_target_offset: {{anyOf: [{{type: object}}, {{type: null}}], default: null}},
+            coord_source_x: {{anyOf: [{{type: integer}}, {{type: null}}], default: null}},
+            coord_source_y: {{anyOf: [{{type: integer}}, {{type: null}}], default: null}},
+            coord_target_x: {{anyOf: [{{type: integer}}, {{type: null}}], default: null}},
+            coord_target_y: {{anyOf: [{{type: integer}}, {{type: null}}], default: null}},
+            steps: {{anyOf: [{{type: integer}}, {{type: null}}], default: 10}},
+            delay_ms: {{anyOf: [{{type: integer}}, {{type: null}}], default: 5}}
         }}
     }}
+    }}
     ＊Respond with a **pure JSON object only**, without any markdown formatting such as ```json or ``` blocks. Do not add any explanations, comments, or additional text—only return the JSON itself.
-    ---
-    '''
-
+    """
     return PromptTemplate(
-        input_variables=['hint', 'candidates', 'actions_str'],
+        input_variables=['hint', 'candidates', 'actions_str', 'page_scroll_ctx'],
         template=prompt
     ).format(
         hint=hint or "",
         candidates=candidates_str,
-        actions_str=actions_str
+        actions_str=actions_str,
+        page_scroll_ctx=page_scroll_ctx_str or '{"y":0,"ih":0,"sh":0,"remainDown":0,"remainUp":0}',
     )
+
 
 def normalize_text(text: str) -> str:
     return (text or "").strip().replace("\n", "").replace("\r", "").replace(" ", "").lower()
@@ -357,57 +351,144 @@ async def find_elements_by_hint(
     dom_service = DomService(page)
     find_target = False
     selected_action = None
-    for i in range(4):     
+    max_steps = 4
+
+    for _ in range(max_steps):
+        # 1) 画面内の候補を取得
         visible_content = await dom_service.get_clickable_elements(
             focus_element=-1,
             viewport_expansion=0,
             highlight_elements=True,
         )
         visible_element_tree = visible_content.element_tree
-        visible_element_tree_str = visible_element_tree.clickable_elements_to_string(include_attributes=include_attributes)
-            
-        prompt = build_select_candidates_by_hint(hint=hint, candidates_str=visible_element_tree_str, actions_str=actions_str)
+        visible_element_tree_str = visible_element_tree.get_all_text_till_next_clickable_element()
+        print(visible_element_tree.get_all_text_till_next_clickable_element())
+
+        # 2) ページスクロール状況をJSON文字列で用意
+        page_ctx = await get_scroll_remaining(page)
+        page_scroll_ctx_str = json.dumps(
+            {
+                "y": page_ctx["y"],
+                "ih": page_ctx["ih"],
+                "sh": page_ctx["sh"],
+                "remainDown": page_ctx["remainDown"],
+                "remainUp": page_ctx["remainUp"],
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+
+        # 3) プロンプト（スクロール判断付き）
+        prompt = build_select_candidates_by_hint(
+            hint=hint,
+            candidates_str=visible_element_tree_str,
+            actions_str=actions_str,
+            page_scroll_ctx_str=page_scroll_ctx_str,  # ← 追加
+        )
+
+        # 4) 画像＋テキストで問い合わせ
         state = await browser.get_state(cache_clickable_elements_hashes=True)
         message = HumanMessage(
             content=[
-                {'type': 'text', 'text': prompt},
+                {"type": "text", "text": prompt},
                 {
-                    'type': 'image_url',
-                    'image_url': {'url': f'data:image/png;base64,{state.screenshot}'},
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/png;base64,{state.screenshot}"},
                 },
             ]
         )
         output = await llm.ainvoke([message])
+
+        # 5) 応答の解釈
+        result = None
         try:
             result = json.loads(output.content)
-            if(result.get("find", False)):
+        except Exception as e:
+            logger.warning(f"LLM parse error: {e}")
+        print(result, output)
+
+        if isinstance(result, dict):
+            if result.get("find", False):
+                # 要素が見つかった
                 find_target = True
                 selected_action = result.get("action", None)
-        except:
-            pass
-        if find_target:
-            break
-        else:
-            at_bottom = await page.evaluate("""
-                () => {
-                    return (window.scrollY + window.innerHeight) >= document.body.scrollHeight;
-                }
-            """)
-            if at_bottom:
                 break
 
-            # スクロール実行
-            scroll_offset = await page.evaluate("() => window.innerHeight")
-            await page.evaluate(f"""
-                () => {{
-                    window.scrollBy({{ top: {scroll_offset}, behavior: 'auto' }});
-                }}
-            """)
-            await asyncio.sleep(0.5)
+            # 見つからない → スクロール指示を実行
+            scroll_dir = (result.get("scroll") or "").lower()  # "down"|"up"|"top"|"bottom"|null
+            action_obj = result.get("action") or {}
+
+            # 量はLLMの action が持っていれば採用、無ければこちらで決定
+            amount = None
+            if scroll_dir in ("down", "bottom"):
+                if "scroll_down" in action_obj and isinstance(action_obj["scroll_down"], dict):
+                    amount = action_obj["scroll_down"].get("amount")
+                if amount is None:
+                    amount = page_ctx["remainDown"] if scroll_dir == "bottom" else min(
+                        int(0.9 * page_ctx["ih"]), page_ctx["remainDown"]
+                    )
+            elif scroll_dir in ("up", "top"):
+                if "scroll_up" in action_obj and isinstance(action_obj["scroll_up"], dict):
+                    amount = action_obj["scroll_up"].get("amount")
+                if amount is None:
+                    amount = page_ctx["remainUp"] if scroll_dir == "top" else min(
+                        int(0.9 * page_ctx["ih"]), page_ctx["remainUp"]
+                    )
+
+            amount = int(amount or 0)
+
+            # 終了条件チェック
+            at_bottom = page_ctx["remainDown"] <= 0
+            at_top = page_ctx["remainUp"] <= 0
+
+            if scroll_dir in ("bottom", "down"):
+                if at_bottom or amount <= 0:
+                    # もう下に行けない
+                    break
+                # 実行
+                if scroll_dir == "bottom":
+                    await page.evaluate(
+                        """(y)=>{ const el=document.scrollingElement||document.documentElement||document.body;
+                                el.scrollTo({top:y,behavior:'instant'}); }""",
+                        page_ctx["bottomY"],
+                    )
+                else:
+                    await page.evaluate(
+                        """(dy)=>{ const el=document.scrollingElement||document.documentElement||document.body;
+                                el.scrollBy({top:dy,behavior:'instant'}); }""",
+                        amount,
+                    )
+
+            elif scroll_dir in ("top", "up"):
+                if at_top or amount <= 0:
+                    # もう上に行けない
+                    break
+                if scroll_dir == "top":
+                    await page.evaluate(
+                        """()=>{ const el=document.scrollingElement||document.documentElement||document.body;
+                                el.scrollTo({top:0,behavior:'instant'}); }"""
+                    )
+                else:
+                    await page.evaluate(
+                        """(dy)=>{ const el=document.scrollingElement||document.documentElement||document.body;
+                                el.scrollBy({top:-Math.abs(dy),behavior:'instant'}); }""",
+                        amount,
+                    )
+            else:
+                # スクロール指示がない/不正 → 打ち切り
+                break
+
+            await asyncio.sleep(0.4)
+            # 次ループへ（再度DOMを見て判断）
+
+        else:
+            # 応答が不正なら終了
+            break
+
+    # 6) 結果
+    print(find_target, selected_action)
     if not find_target:
-        msg = f'not_found'
-        logger.info(msg)
-        return ActionResult(extracted_content=msg)
+        return {}
     return selected_action
 
 
@@ -436,6 +517,7 @@ def attach_run_instruction_based_test(controller: Controller):
                 index = value['index']
                 node = selector_map[index]
                 xpath = node.xpath
+        node.get_all_text_till_next_clickable_element()
         
         extracted_content = {"next_action": selected_action, "xpath": xpath, "log": f""}
         return ActionResult(

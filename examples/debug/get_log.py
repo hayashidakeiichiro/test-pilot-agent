@@ -1,6 +1,6 @@
 import asyncio
 import datetime
-import json
+import json, re
 import os
 import base64
 import io
@@ -11,8 +11,11 @@ from langchain_openai import ChatOpenAI
 from browser_use import ActionResult, Agent, Browser, BrowserConfig, Controller
 from examples.custom_functions.find_target_v3 import attach_find_target_v3
 from examples.custom_functions.run_instruction_based_test import attach_run_instruction_based_test
+from examples.custom_functions.run_recorded_test import attach_run_recorded_test
 from examples.custom_functions.assert_test_success import attach_assert_test_success
 from examples.custom_functions.act_recorded_action import attach_act_recorded_action
+from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse, parse_qs, unquote, urljoin
 
 
 load_dotenv()
@@ -53,6 +56,58 @@ def clear_logs():
                 # os.rmdir(file_path)
     else:
         os.makedirs(LOG_DIR)
+
+def _safe_attrs(action: Dict[str, Any]) -> Dict[str, Any]:
+    allow = {"id","class","name","type","role","href","alt","aria-label","placeholder","value"}
+    attrs = (action.get("attributes") or {})
+    return {k: v for k, v in attrs.items() if k in allow and v not in (None, "", [])}
+
+def _as_actions_list(rec: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """rec が actions配列 or 単一 recorded アクションのどちらでも扱えるように整形"""
+    if isinstance(rec.get("actions"), list):
+        return rec["actions"]
+    if rec.get("type") == "recorded" and isinstance(rec.get("action"), dict):
+        return [rec]
+    return []
+
+def build_assertion_context_str_from_recording(
+    rec: Dict[str, Any],
+) -> str:
+    actions: List[Dict[str, Any]] = _as_actions_list(rec)
+
+    last = actions[-1] if actions else {}
+    last_type = last.get("type", "")
+    last_act: Dict[str, Any] = last.get("action") or {}
+    if last_type == "manual":
+        ctx: Dict[str, Any] = {
+            "last_action": last_act or None,
+        }
+        return json.dumps(ctx, ensure_ascii=False, separators=(",", ":"))
+
+    last_url: Optional[str] = last.get("url")
+
+
+    # --- last_action 要約（click 以外にも汎用で持たせる）---
+    la_attrs = _safe_attrs(last_act)
+    last_action = {
+        "type": (last_act.get("type") or "").lower() or None,
+        "selector": last_act.get("selector") or None,
+        "xpath": last_act.get("xpath") or None,
+        "innerText": (last_act.get("innerText") or None),
+        "attributes": la_attrs or None,
+        "isButton": last_act.get("isButton") if "isButton" in last_act else None,
+        "position": last_act.get("position") or None,
+        "timestamp": last_act.get("timestamp") or None,
+        "tabId": last.get("tabId") or None,
+    }
+    last_action = {k: v for k, v in last_action.items() if v is not None}
+
+    ctx: Dict[str, Any] = {
+        "prev_url": last_url,
+        "last_action": last_action or None,
+    }
+    ctx = {k: v for k, v in ctx.items() if v is not None}
+    return json.dumps(ctx, ensure_ascii=False, separators=(",", ":"))
 
 
 def extract_base64_image(text):
@@ -129,7 +184,7 @@ async def main_task():
     # """
     clear_logs()
     controller = Controller()
-    attach_find_target_v3(controller)
+    attach_run_recorded_test(controller)
     attach_run_instruction_based_test(controller)
     attach_assert_test_success(controller)
     attach_act_recorded_action(controller)
@@ -145,11 +200,11 @@ async def main_task():
             xpath=json.loads(extracted_content).get("xpath","")
         except:
             xpath = None
-        await page.evaluate('''
-            // 既存のオーバーレイ削除
-            const overlays = document.querySelectorAll("#playwright-highlight-container");
-            overlays.forEach(el => el.remove());
-        ''')
+        # await page.evaluate('''
+        #     // 既存のオーバーレイ削除
+        #     const overlays = document.querySelectorAll("#playwright-highlight-container");
+        #     overlays.forEach(el => el.remove());
+        # ''')
         # 目立つオーバーレイを追加
         if(xpath):
             await page.evaluate('''
@@ -224,7 +279,7 @@ async def main_task():
         step = test_steps_json_list[i]
         if step["type"] == "recorded":
             actions.append({
-                "find_target": {
+                "run_recorded_test": {
                     "test_steps_json": step
                 }
             })
@@ -235,11 +290,12 @@ async def main_task():
                 }
             })
         i += 1
-
-    print(f"actions: {actions}")
+    ctx = build_assertion_context_str_from_recording(json_data)
+    print(f"actions:", ctx)
     actions.append({
         "assert_test_success": {
-            "assertion": "https://zenn.dev/articles/exploreに遷移していること",
+            "assertion": "メアドを入力しろ的な文言が出る",
+            "action_context": ctx   
         }
     })
 

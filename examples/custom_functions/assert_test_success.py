@@ -63,21 +63,31 @@ include_attributes: list[str] = [
 
 from langchain.prompts import PromptTemplate
 import json
-def build_assertion_prompt(assertion: str, candidates_str: str, url: str) -> str:
-    prompt = '''
-    You are shown a screenshot of a web page and an expected test result indicator.
+def build_assertion_prompt(
+    assertion: str,
+    candidates_str: str,
+    url: str,
+    context: str | dict | None = None,
+) -> str:
+    ctx_json = context if isinstance(context, str) else json.dumps(context or {}, ensure_ascii=False)
 
-    Your task is to determine whether the test has succeeded, failed, or is still undetermined based on visible content.
+    prompt = '''
+        You are a tester responsible for determining whether a web application's test has passed or failed based on the visible content and, when applicable, the current URL. Your task is to determine whether the test has succeeded, failed, or is still undetermined using the expected test result indicator as an assertion.
 
     ---
 
-    ## Expected Indicator:
+    ## Expected Indicator (Assertion):
     "{assertion}"
 
     ---
 
-    ## URL:
+    ## Current URL:
     {url}
+
+    ---
+
+    ## Context (JSON):
+    {ctx_json}
 
     ---
 
@@ -88,10 +98,24 @@ def build_assertion_prompt(assertion: str, candidates_str: str, url: str) -> str
 
     ### Instructions:
 
-    1. Carefully analyze the screenshot.
-    2. If you see an indicator that the test was successful (e.g., "Test passed", ✅, 完了), return: `"status": "success"`.
-    3. If you see an indicator that the test failed (e.g., "Test failed", ❌, エラー), return: `"status": "failure"`.
-    4. If you cannot tell yet, return: `"status": "uncertain"` and suggest one of the following scroll directions:
+    1. **Analyze the Content**:
+    - Carefully analyze the screenshot or content provided.
+    - Check if the expected indicator (assertion) is visible. This could be specific text, a button, image, or other elements relevant to the test case.
+    - If the expected indicator (assertion) is found in the content, mark the test as "success."
+
+    2. **When URL is Relevant**:
+    - If the test case involves verifying that a specific page has loaded, check the URL to ensure it matches the expected one (e.g., an article page, a login page).
+    - If the URL is incorrect or the page is not as expected, return `"status": "failure"`.
+
+    3. **Use Context**:
+    - Use the provided Context (JSON) when relevant (e.g., last action kind/args, target_url hints).
+
+    4. **Determine Success or Failure**:
+    - If the content matches the expected indicator (assertion) or the URL matches and the content is as expected, return: `"status": "success"`.
+    - If the expected indicator (assertion) is missing or the URL is incorrect, return: `"status": "failure"`.
+
+    5. **Uncertain Status**:
+    - If the content is not clear or incomplete, and the result is not obvious, return: `"status": "uncertain"`. Suggest one of the following scroll directions:
         - "down", "up", "top", "bottom"
 
     Respond in this exact JSON format:
@@ -105,18 +129,20 @@ def build_assertion_prompt(assertion: str, candidates_str: str, url: str) -> str
     ＊Respond with a **pure JSON object only**, without any markdown formatting such as ```json or ``` blocks. Do not add any explanations, comments, or additional text—only return the JSON itself.
     '''
     return PromptTemplate(
-        input_variables=['assertion', 'candidates'],
+        input_variables=['assertion', 'candidates', 'url', 'ctx_json'],
         template=prompt
     ).format(
         assertion=assertion or "",
-        candidates=candidates_str,
-        url=url
+        candidates=candidates_str or "",
+        url=url or "",
+        ctx_json=ctx_json or "{}",
     )
 
 
 async def assert_result_on_screen(
     llm: BaseChatModel,
     assertion: str,
+    context: str,
     browser: BrowserContext,
     max_attempts: int = 4,
 ) -> ActionResult:
@@ -132,7 +158,7 @@ async def assert_result_on_screen(
         )
         tree_str = visible_content.element_tree.clickable_elements_to_string(include_attributes=["class", "aria-label"])
 
-        prompt = build_assertion_prompt(assertion=assertion, candidates_str=tree_str, url=page.url)
+        prompt = build_assertion_prompt(assertion=assertion, candidates_str=tree_str, url=page.url, context=context)
         state = await browser.get_state(cache_clickable_elements_hashes=True)
 
         message = HumanMessage(
@@ -154,10 +180,10 @@ async def assert_result_on_screen(
             reason = result.get("reason", "")
 
             if status == "success":
-                output_dict = {"success": True, "reason": reason}
+                output_dict = {"success": True, "log": reason}
                 return ActionResult(extracted_content=json.dumps(output_dict), success=True, is_done=True)
             elif status == "failure":
-                output_dict = {"success": False, "reason": reason}
+                output_dict = {"success": False, "log": reason}
                 return ActionResult(extracted_content=json.dumps(output_dict), success=False, is_done=True)
 
             # status == "uncertain" → scroll if LLM suggests
@@ -175,7 +201,7 @@ async def assert_result_on_screen(
             logger.warning(f"LLM response error or parsing failure: {e}")
 
     # max_attemptsまで試しても success にならなかった
-    output_dict = {"success": False, "reason": reason}
+    output_dict = {"success": False, "log": reason}
     return ActionResult(extracted_content=json.dumps(output_dict), success=False, is_done=True)
 
 def attach_assert_test_success(controller: Controller):
@@ -183,12 +209,14 @@ def attach_assert_test_success(controller: Controller):
     async def assert_test_success(
         browser: BrowserContext,
         page_extraction_llm: BaseChatModel,
-        assertion: str
+        assertion: str,
+        action_context: str
     ):
         result = await assert_result_on_screen(
             browser=browser,
             llm=page_extraction_llm,
-            assertion=assertion
+            assertion=assertion,
+            context=action_context
         )
         return result
 

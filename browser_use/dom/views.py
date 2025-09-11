@@ -1,11 +1,12 @@
 from dataclasses import dataclass
 from functools import cached_property
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, List, Dict
 
 from browser_use.dom.history_tree_processor.view import CoordinateSet, HashedDomElement, ViewportInfo
 from browser_use.utils import time_execution_sync
 from urllib.parse import urlparse, unquote
 import re
+from collections import defaultdict, Counter
 
 # Avoid circular import issues
 if TYPE_CHECKING:
@@ -132,59 +133,254 @@ class DOMElementNode(DOMBaseNode):
 		return HistoryTreeProcessor._hash_dom_element(self)
 
 	def get_all_text_till_next_clickable_element(self, max_depth: int = -1, include_attr_for_img: bool = True) -> str:
-		text_parts = []
+		"""
+		1) DOM を「インデックス要素（= highlight_index:int がある要素）」基準でまず dict ツリーに変換
+		2) その dict からテキストにレンダリング
 
-		def collect_text(node: DOMBaseNode, current_depth: int) -> None:
-			if max_depth != -1 and current_depth > max_depth:
-				return
+		グルーピング規則（cap 方式）:
+		- 各ノードの「配下に含まれるインデックス要素の個数 = indexed_count」を数える
+		- 出力時に親から cap（親の indexed_count）を受け取り、現在ノードの cnt と比べて
+			* cnt >= 2 かつ (cap is None or cnt < cap) のとき:
+				=> <要素名> を出して中身をインデントして再帰（cap を cnt に更新）
+			* cnt == cap のとき:
+				=> その要素名は出さず、同じインデントで子だけを出力（= 無視）
+			* それ以外:
+				=> その要素がインデックス要素なら 1 行のアイテムとして出力
+		- DOMTextNode も dict に含め、テキスト行として出力（カウントには含めない）
 
-			# Skip this branch if we hit a highlighted element (except for the current node)
-			if isinstance(node, DOMElementNode) and node != self and node.highlight_index is not None:
-				return
+		返り値は最終的なレンダリング文字列。
+		"""
 
+		# ----------------- 小道具 -----------------
+		def trim_ws(s: str) -> str:
+			return " ".join((s or "").split())
+
+		def truncate(s: str, n: int = 160) -> str:
+			s = s or ""
+			return s if len(s) <= n else s[: n - 1] + "…"
+
+		def summarize_image_url_segments(src_text: str) -> str:
+			if not src_text:
+				return ""
+			parsed = urlparse(unquote(src_text))
+			segs = [seg for seg in parsed.path.strip("/").split("/") if seg]
+			short = [seg for seg in segs if len(seg) <= 12]
+			picked = short[:3] if short else segs[:2]
+			return "/".join(picked)
+
+		def element_signature(node: "DOMElementNode") -> str:
+			"""div#id.class1.class2（クラスは先頭2つ + … を付与）"""
+			tag = (getattr(node, "tag_name", "") or "element").lower()
+			attrs = getattr(node, "attributes", {}) or {}
+			_id = trim_ws(attrs.get("id", ""))
+			cls = trim_ws(attrs.get("class", ""))
+			cls_list = [c for c in cls.split() if c]
+			cls_head = "." + ".".join(cls_list[:2]) if cls_list else ""
+			cls_tail = "…" if len(cls_list) > 2 else ""
+			id_part = f"#{_id}" if _id else ""
+			return f"{tag}{id_part}{cls_head}{cls_tail}"
+
+		def element_open_meta(node: "DOMElementNode") -> Dict[str, str]:
+			"""開始側に付ける簡易メタ（role/name/aria-label/title）"""
+			attrs = getattr(node, "attributes", {}) or {}
+			return {
+				"role": trim_ws(attrs.get("role", "")) or "",
+				"name": trim_ws(attrs.get("name", "")) or "",
+				"label": trim_ws(attrs.get("aria-label", "") or attrs.get("title", "")) or "",
+			}
+
+		def is_indexed_element(node) -> bool:
+			return isinstance(node, DOMElementNode) and isinstance(getattr(node, "highlight_index", None), int)
+
+		# ----------------- 1st pass: indexed_count を数える -----------------
+		indexed_count: Dict[int, int] = {}
+
+		def count_indexed(node) -> int:
+			total = 0
+			if is_indexed_element(node):
+				total += 1
+			for ch in getattr(node, "children", []):
+				total += count_indexed(ch)
+			# DOMTextNode は 0
+			indexed_count[id(node)] = total
+			return total
+
+		count_indexed(self)
+
+		# ----------------- 2nd pass: dict ツリーを構築 -----------------
+		# dict ノードのフォーマット:
+		#   Group: {"type":"group","signature":str,"meta":{...},"items":int,"children":[...]}
+		#   Item : {"type":"item","index":int,"signature":str,"attrs":{...},"kind":"TEXT|IMAGE","label":str,"text_nodes":[str,...]}
+		#   Text : {"type":"text","text":str}
+
+		def collect_text_descendants(node: "DOMElementNode", depth_limit: int = 2) -> List[str]:
+			"""その要素配下の DOMTextNode テキストだけ浅く回収（別の index 要素の中は潜らない）"""
+			out: List[str] = []
+			def walk(n, d):
+				if max_depth != -1 and d > depth_limit:
+					return
+				if isinstance(n, DOMTextNode):
+					t = trim_ws(getattr(n, "text", ""))
+					if t:
+						out.append(t)
+					return
+				if isinstance(n, DOMElementNode):
+					if is_indexed_element(n) and n is not node:
+						return
+					for c in getattr(n, "children", []):
+						walk(c, d + 1)
+			walk(node, 0)
+			return out
+
+		def build_item(node: "DOMElementNode") -> Dict:
+			"""インデックス要素を item dict にする"""
+			idx = getattr(node, "highlight_index")
+			sig = element_signature(node)
+			attrs = getattr(node, "attributes", {}) or {}
+			type_attr = trim_ws(attrs.get("type", ""))
+			role_attr = trim_ws(attrs.get("role", ""))
+			class_attr = trim_ws(attrs.get("class", ""))
+
+			tag = (getattr(node, "tag_name", "") or "").lower()
+			if tag == "img" and include_attr_for_img:
+				alt = trim_ws(attrs.get("alt", ""))
+				src = trim_ws(attrs.get("src", ""))
+				label = " ".join(
+					p for p in [
+						f"alt='{truncate(alt,80)}'" if alt else "",
+						f"src='{truncate(summarize_image_url_segments(src),60)}'" if src else "",
+					] if p
+				) or "(no-attr)"
+				kind = "IMAGE"
+				text_nodes = []  # 画像は本文テキスト不要
+			else:
+				kind = "TEXT"
+				text_nodes = collect_text_descendants(node, depth_limit=2)
+				label = (text_nodes[0] if text_nodes else "").strip()
+
+			return {
+				"type": "item",
+				"index": idx,
+				"signature": sig,
+				"attrs": {
+					"type": type_attr,
+					"role": role_attr,
+					"class": truncate(class_attr, 120) if class_attr else "",
+				},
+				"kind": kind,
+				"label": truncate(label, 160) if label else "",
+				"text_nodes": [truncate(t, 160) for t in text_nodes],
+			}
+
+		def build_dict(node: "DOMBaseNode", cap: Optional[int], depth_from_root: int) -> List[Dict]:
+			"""
+			現在ノードから生成される dict ノードのリストを返す（flatten されることもある）。
+			- group 開始条件: cnt>=2 かつ (cap is None or cnt < cap)
+			- cnt==cap の中間要素は group にせず素通り
+			- インデックス要素は item として 1 ノード
+			- DOMTextNode は text ノード
+			"""
+			if max_depth != -1 and depth_from_root > max_depth:
+				return []
+
+			# テキスト
 			if isinstance(node, DOMTextNode):
-				text_parts.append(node.text)
-			# test-pilot
-			#　画像を認識するのが難しいのでattributeを入れる
-			# test-pilot-img-attributeで検索すると属性を追加できる
-			elif isinstance(node, DOMElementNode):
-				def summarize_image_url_segments(src_text: str) -> str:
-					if not src_text:
-						return ""
+				t = trim_ws(getattr(node, "text", ""))
+				return [{"type": "text", "text": truncate(t, 160)}] if t else []
 
-					# URLをデコードしてパス部分を取得
-					parsed = urlparse(unquote(src_text))
-					segments = parsed.path.strip("/").split("/")
+			# 要素でない
+			if not isinstance(node, DOMElementNode):
+				return []
 
-					# 10文字以下のセグメントだけ残す
-					filtered = [seg for seg in segments if len(seg) <= 10]
+			cnt = indexed_count.get(id(node), 0)
 
-					# 空でなければ整形
-					if filtered:
-						return '/'.join(filtered)
-					else:
-						return ""
-				# If the element is an <img> tag and has no text, include its 'alt' or 'src' attributes
-				for child in node.children:
-					if isinstance(child, DOMElementNode) and child.tag_name == 'img' and include_attr_for_img:
-						alt_text = child.attributes.get('alt', '').strip()
-						src_text = child.attributes.get('src', '').strip()
-						class_text = child.attributes.get('class', '').strip()
-						title_text = child.attributes.get('title', '').strip()
-						if alt_text:
-							text_parts.append(f"[Image: {alt_text}]")
-						if src_text:
-							text_parts.append(f"[Image URL: {summarize_image_url_segments(src_text)}]")
-						if class_text:
-							text_parts.append(f"[Image class: {class_text}]")
-						if title_text:
-							text_parts.append(f"[Image title: {title_text}]")
-					collect_text(child, current_depth + 1)
-			# test-pilot		
+			# group として出すか？
+			if cnt >= 2 and (cap is None or cnt < cap):
 
-		collect_text(self, 0)
-		return '\n'.join(text_parts).strip()
+				g_children: List[Dict] = []
+				for ch in getattr(node, "children", []):
+					# 子に降りる条件: テキスト or 配下に index がある枝 or 子自身が index
+					if isinstance(ch, DOMTextNode) or indexed_count.get(id(ch), 0) > 0 or is_indexed_element(ch):
+						g_children.extend(build_dict(ch, cnt, depth_from_root + 1))
 
+				return [{
+					"type": "group",
+					"signature": element_signature(node),
+					"meta": element_open_meta(node),     # {"role","name","label"}
+					"items": cnt,                        # この要素配下のインデックス要素数
+					"children": g_children,
+				}]
+
+			# group にしない場合：自分がインデックス要素なら item
+			if is_indexed_element(node):
+				return [build_item(node)]
+
+			# それ以外は素通り（子だけを同じ cap で）
+			out: List[Dict] = []
+			for ch in getattr(node, "children", []):
+				if isinstance(ch, DOMTextNode) or indexed_count.get(id(ch), 0) > 0 or is_indexed_element(ch):
+					out.extend(build_dict(ch, cap, depth_from_root + 1))
+			return out
+
+		# ルートの dict（常に配列を children に持つラッパーにする）
+		dict_root = {
+			"type": "root",
+			"children": build_dict(self, None, 0),
+		}
+
+		# ----------------- dict → テキスト レンダリング -----------------
+		INDENT = "  "
+
+		def render_node(n: Dict, indent: int, out_lines: List[str]):
+			t = n.get("type")
+			if t == "group":
+				sig = n.get("signature", "")
+				meta = n.get("meta", {}) or {}
+				items = n.get("items", 0)
+				meta_str_parts = []
+				if meta.get("role"):
+					meta_str_parts.append(f"role='{meta['role']}'")
+				if meta.get("name"):
+					meta_str_parts.append(f"name='{truncate(meta['name'], 40)}'")
+				meta_str = (" " + " ".join(meta_str_parts)) if meta_str_parts else ""
+				label = meta.get("label", "")
+				label_str = f' "{truncate(label, 60)}"' if label else ""
+				out_lines.append(f"{INDENT*indent}<{sig}{meta_str}>")
+				for c in n.get("children", []):
+					render_node(c, indent + 1, out_lines)
+				out_lines.append(f"{INDENT*indent}</{sig}>")
+			elif t == "item":
+				sig = n.get("signature", "")
+				idx = n.get("index")
+				kind = n.get("kind", "TEXT")
+				attrs = n.get("attrs", {}) or {}
+				extra_parts = []
+				if attrs.get("type"):
+					extra_parts.append(f"type='{attrs['type']}'")
+				if attrs.get("role"):
+					extra_parts.append(f"role='{attrs['role']}'")
+				if attrs.get("class"):
+					extra_parts.append(f"class='{attrs['class']}'")
+				extra = (" " + " ".join(extra_parts)) if extra_parts else ""
+				label = n.get("label", "")
+				label_str = f" {truncate(label, 160)}" if label else ""
+				out_lines.append(f"{INDENT*indent}[{idx}]<{sig}{extra}> {label_str} />")
+				# 追従テキスト行（あれば）
+				for tx in n.get("text_nodes", []):
+					if tx:
+						out_lines.append(f"{INDENT*(indent+1)} {tx}")
+			elif t == "text":
+				text = n.get("text", "")
+				if text:
+					out_lines.append(f"{INDENT*indent} {text}")
+			elif t == "root":
+				for c in n.get("children", []):
+					render_node(c, indent, out_lines)
+
+		lines: List[str] = []
+		render_node(dict_root, 0, lines)
+		# print(dict_root)
+		return "\n".join(lines).strip()
 	@time_execution_sync('--clickable_elements_to_string')
 	def clickable_elements_to_string(self, include_attributes: list[str] | None = None) -> str:
 		"""Convert the processed DOM content to HTML."""
