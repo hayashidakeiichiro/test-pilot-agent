@@ -156,7 +156,7 @@ async def assert_result_on_screen(
             viewport_expansion=0,
             highlight_elements=True,
         )
-        tree_str = visible_content.element_tree.clickable_elements_to_string(include_attributes=["class", "aria-label"])
+        tree_str = visible_content.element_tree.get_all_text_till_next_clickable_element()
 
         prompt = build_assertion_prompt(assertion=assertion, candidates_str=tree_str, url=page.url, context=context)
         state = await browser.get_state(cache_clickable_elements_hashes=True)
