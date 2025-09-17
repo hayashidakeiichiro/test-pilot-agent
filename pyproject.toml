@@ -66,6 +66,8 @@ Repository = "https://github.com/browser-use/browser-use"
 [project.scripts]
 browseruse = "browser_use.cli:main"
 browser-use = "browser_use.cli:main"
+test-pilot-agent = "browser_use.cli:main"
+tpagent = "browser_use.cli:main"
 
 [tool.codespell]
 ignore-words-list = "bu"

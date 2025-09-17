@@ -38,3 +38,5 @@ private_example
 uv.lock
 
 logs/
+
+.pypirc
