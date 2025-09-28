@@ -109,10 +109,10 @@ def similarity_score(target: TestStep, candidate: TestStep) -> float:
         add_score(fuzz.token_set_ratio(target.attributes.get('alt'), candidate.attributes.get('alt')) / 100, low_weight)
 
     if target.xpath and candidate.xpath:
-        add_score(normalized_xpath_levenshtein(target.xpath, candidate.xpath), low_weight)
+        add_score(normalized_xpath_levenshtein(target.xpath, candidate.xpath), high_weight)
 
     if target.innerText and candidate.innerText:
-        add_score(fuzz.token_set_ratio(clean_text(target.innerText), clean_text(candidate.innerText)) / 100, high_weight)
+        add_score(fuzz.token_set_ratio(clean_text(target.innerText), clean_text(candidate.innerText)) / 100, low_weight)
 
     if target.siblingTexts and candidate.siblingTexts:
         target_neighbors = clean_text(' '.join(target.siblingTexts))
@@ -132,7 +132,7 @@ def similarity_score(target: TestStep, candidate: TestStep) -> float:
     if target.position and candidate.position:
         dist = euclidean_distance(target.position, candidate.position)
         pos_sim = max(0, 1 - dist / 100)
-        add_score(pos_sim, low_weight)
+        add_score(pos_sim, high_weight)
 
         target_area = area(target.position.width, target.position.height)
         candidate_area = area(candidate.position.width, candidate.position.height)
@@ -154,6 +154,32 @@ async def scroll_to_element(page, el) -> None:
         el
     )
     await asyncio.sleep(3)
+async def scroll_to_xpath(page, xpath: str, smooth: bool = False) -> bool:
+    """
+    document.evaluate で要素を取得し、scrollIntoView する。
+    見つかれば True、見つからなければ False。
+    """
+    behavior = "smooth" if smooth else "auto"
+    found = await page.evaluate(
+        """([xp, behavior]) => {
+            const result = document.evaluate(
+                xp, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null
+            );
+            const el = result.singleNodeValue;
+            if (!el) return false;
+            try {
+                el.scrollIntoView({ behavior: behavior, block: 'center', inline: 'center' });
+                return true;
+            } catch (_) {
+                return false;
+            }
+        }""",
+        [xpath, behavior],
+    )
+    # スムーススクロール時は少し待つ
+    if found and smooth:
+        await page.wait_for_timeout(300)
+    return bool(found)
 
 async def scroll_to_y_position(page, y: float) -> None:
     await page.evaluate(
@@ -263,11 +289,10 @@ def attach_run_recorded_test(controller):
                 }
             }
         }
-        node = best_entry["node"]
-        element_handle = await browser.get_locate_element(node)
 
-        await scroll_to_element(page, element_handle)
-        extracted_content={ "next_action": next_action, "log": "", "xpath": best_entry["node"].xpath}
+        await scroll_to_xpath(page, best_entry["node"].xpath)
+        extracted_content={ "next_action": next_action, "log":best_entry["test_step"].type, "xpath": best_entry["node"].xpath}
+        print(best_entry["node"].xpath)
 
         return ActionResult(
             extracted_content=json.dumps(extracted_content),
